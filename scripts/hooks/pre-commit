@@ -1,0 +1,22 @@
+#!/bin/bash
+# Block the commit if a credential, or anything under .claude/, is staged.
+# Install with scripts/install-hooks.sh — git does not track .git/hooks,
+# so a fresh clone has no protection until that is run.
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+scanner="$repo_root/scripts/scan-secrets.sh"
+
+if [ ! -x "$scanner" ]; then
+    echo "pre-commit: $scanner missing or not executable — refusing." >&2
+    exit 1
+fi
+
+if ! "$scanner"; then
+    echo "" >&2
+    echo "pre-commit: BLOCKED — see above. This repo is PUBLIC." >&2
+    echo "Redact the value rather than masking it: the scanner matches the" >&2
+    echo "shape, so user:<REDACTED>@host still trips it." >&2
+    echo "Override only if certain: git commit --no-verify" >&2
+    exit 1
+fi
