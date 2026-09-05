@@ -1,0 +1,9 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+const base = import.meta.env.BASE_URL;
+---
+<BaseLayout title="Not found — Cursed Shrine" description="That page does not exist." noindex>
+  <h1 class="text-2xl font-bold">404</h1>
+  <p class="mt-2 text-[var(--color-ink-dim)]">That page does not exist.</p>
+  <a href={base} class="mt-4 inline-block text-[var(--color-accent)] underline">Back to the blog</a>
+</BaseLayout>

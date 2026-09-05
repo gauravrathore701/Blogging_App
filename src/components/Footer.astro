@@ -1,0 +1,10 @@
+---
+const base = import.meta.env.BASE_URL;
+const year = new Date().getFullYear();
+---
+<footer class="mt-16 border-t border-[var(--color-line)]">
+  <div class="mx-auto flex max-w-3xl flex-wrap justify-between gap-2 px-4 py-6 text-sm text-[var(--color-muted)]">
+    <span>© {year} Cursed Shrine</span>
+    <a href={`${base}/rss.xml`} class="hover:text-[var(--color-accent)]">RSS</a>
+  </div>
+</footer>

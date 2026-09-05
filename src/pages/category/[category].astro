@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PostCard from '../../components/PostCard.astro';
+import { getPosts, CATEGORIES } from '../../lib/posts';
+
+// Only categories that actually have posts get a page. An empty category
+// index is thin content, and nothing links to it now that the nav is gone.
+export async function getStaticPaths() {
+  const posts = await getPosts();
+  const used = [...new Set(posts.map((p) => p.data.category))];
+  return used.map((category) => ({
+    params: { category },
+    props: { posts: posts.filter((p) => p.data.category === category) },
+  }));
+}
+
+const { category } = Astro.params;
+const { posts } = Astro.props;
+const label = CATEGORIES[category as keyof typeof CATEGORIES];
+---
+<BaseLayout title={`${label} — Cursed Shrine`} description={`Posts in ${label}.`}>
+  <h1 class="text-2xl font-bold tracking-tight">{label}</h1>
+  {posts.length === 0 ? (
+    <p class="mt-6 text-[var(--color-muted)]">Nothing here yet.</p>
+  ) : (
+    posts.map((post) => <PostCard post={post} />)
+  )}
+</BaseLayout>

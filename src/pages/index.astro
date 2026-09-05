@@ -1,0 +1,17 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PostCard from '../components/PostCard.astro';
+import { getPosts } from '../lib/posts';
+const posts = await getPosts();
+---
+<BaseLayout
+  title="Cursed Shrine — Blog"
+  description="Tech, homelab teardowns, finance and books. Written from a Raspberry Pi."
+>
+  <h1 class="text-2xl font-bold tracking-tight">Latest</h1>
+  {posts.length === 0 ? (
+    <p class="mt-6 text-[var(--color-muted)]">No posts published yet.</p>
+  ) : (
+    posts.map((post) => <PostCard post={post} />)
+  )}
+</BaseLayout>

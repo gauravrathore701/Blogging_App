@@ -1,0 +1,55 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+const base = import.meta.env.BASE_URL;
+---
+<BaseLayout title="Search — Cursed Shrine" description="Search every post.">
+  <h1 class="text-2xl font-bold tracking-tight">Search</h1>
+
+  <input
+    id="q"
+    type="search"
+    autocomplete="off"
+    placeholder="Search posts…"
+    class="mt-6 w-full rounded border border-[var(--color-line)] bg-[var(--color-bg-sec)] px-3 py-2 text-[var(--color-ink)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:outline-none"
+  />
+  <p id="status" class="mt-3 text-sm text-[var(--color-muted)]">Loading index…</p>
+  <ul id="results" class="mt-4"></ul>
+</BaseLayout>
+
+<script>
+  import MiniSearch from 'minisearch';
+
+  const base = import.meta.env.BASE_URL;
+  const input = document.getElementById('q') as HTMLInputElement;
+  const status = document.getElementById('status')!;
+  const results = document.getElementById('results')!;
+
+  const mini = new MiniSearch({
+    fields: ['title', 'description', 'tags', 'body'],
+    storeFields: ['title', 'description', 'category', 'date'],
+    searchOptions: { boost: { title: 3, tags: 2 }, prefix: true, fuzzy: 0.2 },
+  });
+
+  const res = await fetch(`${base}/search-index.json`);
+  mini.addAll(await res.json());
+  status.textContent = 'Type to search.';
+  input.focus();
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    results.innerHTML = '';
+    if (!q) { status.textContent = 'Type to search.'; return; }
+
+    const hits = mini.search(q).slice(0, 20);
+    status.textContent = hits.length ? `${hits.length} result(s)` : 'No matches.';
+
+    for (const hit of hits) {
+      const li = document.createElement('li');
+      li.className = 'border-b border-[var(--color-line)] py-3';
+      li.innerHTML =
+        `<a class="font-semibold hover:text-[var(--color-accent)]" href="${base}/posts/${hit.id}">${hit.title}</a>` +
+        `<p class="mt-1 text-sm text-[var(--color-ink-dim)]">${hit.description}</p>`;
+      results.appendChild(li);
+    }
+  });
+</script>

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.astro/
+.DS_Store
+*.log
+.env
+.env.*
+.env.local
+*.env
+config.py
+secrets.*
+*.key
+*.pem
+__pycache__/
+*.pyc
+venv/
+.venv/
+.next/
+build/
+
+# Local working notes, research and infra docs. Never published.
+.claude/
