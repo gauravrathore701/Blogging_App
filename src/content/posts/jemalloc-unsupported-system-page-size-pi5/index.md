@@ -145,9 +145,38 @@ is broken — as above. Run it and find out.
 
 **1. Pin an older version.** Cheapest when it exists. Pagefind #1147
 reports 1.5.0 working and 1.5.2 crashing, so the regression landed around
-1.5.1. I have not tested that downgrade on this box, so treat it as
-reported, not verified. It is also the option nobody in the other issue
-threads has, because it is specific to one project's history.
+1.5.1. **I have now tested that on this box, and the issue is exactly
+right:**
+
+```
+$ npx -y pagefind@1.4.0 --version
+pagefind 1.4.0
+
+$ npx -y pagefind@1.5.0 --version
+pagefind 1.5.0
+
+$ npx -y pagefind@1.5.2 --version
+<jemalloc>: Unsupported system page size
+<jemalloc>: Unsupported system page size
+memory allocation of 16 bytes failed
+```
+
+And 1.5.0 does not merely start — it indexes:
+
+```
+$ npx -y pagefind@1.5.0 --site dist \
+    --output-path /tmp/pf-test
+[Building search indexes]
+  Indexed 1 language
+  Indexed 1 page
+  Indexed 88 words
+Finished in 0.445 seconds
+```
+
+So on this hardware Pagefind has a working, pinnable release, and the
+crash is a regression rather than a permanent incompatibility. It is
+also the option nobody in the other issue threads has, because it is
+specific to one project's history.
 
 **2. Boot the 4 KB kernel.** Both kernels are already on your Pi. No
 download:
@@ -205,8 +234,18 @@ instead — that is [its own post](/blog/).
 If the tool that broke for you is the point of the machine, weigh it the
 other way. Option 2 is one line and a reboot, and it works.
 
+**An honest postscript.** When I made that call I had not run option 1.
+I have now, and `pagefind@1.5.0` works here — so the choice I actually
+faced was not "Pagefind or nothing", it was "pin a release that upstream
+has moved past, or switch". I still think switching was right, because a
+pin is a debt with no repayment date: the version that works is the
+version before the fix I am waiting for. But the post would be dishonest
+if it let you believe the tool was unusable on this board. It is not.
+It is unusable *at current*.
+
 ---
 
-*Verified on this box 2026-09-02 and 2026-09-03: Raspberry Pi 5,
-`6.12.75+rpt-rpi-2712`, `getconf PAGESIZE` = 16384. Issue links are as
-filed; check their current state before relying on them.*
+*Verified on this box 2026-09-02, 2026-09-03 and 2026-09-06: Raspberry
+Pi 5, `6.12.75+rpt-rpi-2712`, `getconf PAGESIZE` = 16384. The Pagefind
+version matrix above was run 2026-09-06. Issue links are as filed; check
+their current state before relying on them.*
