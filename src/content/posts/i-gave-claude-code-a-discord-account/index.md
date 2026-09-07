@@ -1,10 +1,10 @@
 ---
 title: "I gave Claude Code a Discord account"
-description: "Fifteen months running a coding agent as a chat bot on a Raspberry Pi. The hard parts were not the model — they were prompt composition, directory routing, timeouts, and proving it was alive."
+description: "Two and a half months running a coding agent as a chat bot on a Raspberry Pi. The hard parts were not the model — they were prompt composition, directory routing, timeouts, and proving it was alive."
 date: 2026-09-06
 category: tech
 tags: ["claude-code", "discord", "agents", "python", "self-hosting"]
-draft: true
+draft: false
 ---
 
 Somewhere around month two I stopped adding features to this bot and
@@ -164,7 +164,8 @@ shell on a machine that hosts real services.
 The mitigations, all of which are load-bearing and none of which are
 clever:
 
-- A hardcoded allowlist of Discord user IDs. One entry.
+- An allowlist of Discord user IDs, read from the environment at
+  startup. Two entries.
 - An allowlist of channel IDs. Messages anywhere else are ignored.
 - It runs as an unprivileged user, not root.
 - Each channel is pinned to a working directory.
@@ -194,7 +195,7 @@ generation almost immediately.
 
 What it became useful for is *reading the machine's own history before
 answering*. There is a rule in the shared prompt requiring a markdown
-note in a project's history folder after any significant change. Fifteen
+note in a project's history folder after any significant change. Two
 months in, those notes are the reason the bot can answer questions like
 "why is this configured this way" — not because the model knows, but
 because a previous session wrote down what it did and when, and this

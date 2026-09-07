@@ -4,7 +4,7 @@ description: "Ten local services behind one Cloudflare Tunnel on a Raspberry Pi.
 date: 2026-09-05
 category: tech
 tags: ["cloudflare-tunnel", "cloudflared", "raspberry-pi", "self-hosting"]
-draft: true
+draft: false
 ---
 
 There is a config file on this Raspberry Pi where two rules can be

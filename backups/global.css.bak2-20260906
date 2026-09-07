@@ -4,14 +4,14 @@
    Deliberately NOT the charcoal palette the other sites share —
    this one is meant to read like a printed page. */
 @theme {
-  --color-bg: #e8dfc9;        /* aged paper, dimmed */
-  --color-bg-sec: #ddd2b7;    /* deeper leaf, for surfaces */
+  --color-bg: #f6f0e2;        /* aged paper */
+  --color-bg-sec: #ece2cd;    /* deeper leaf, for surfaces */
   --color-ink: #2b2723;       /* headings — matte, warm, never #000 */
   --color-ink-dim: #3f3830;   /* body copy, a shade softer */
   --color-accent: #6b4a2f;    /* links, sepia ink */
   --color-accent-dim: #8a6a4b;
-  --color-muted: #6f6555;     /* captions, quotes, meta */
-  --color-line: #cbbd9e;      /* hairlines */
+  --color-muted: #7a7062;     /* captions, quotes, meta */
+  --color-line: #ded2b9;      /* hairlines */
   --font-sans: ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -21,40 +21,7 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Paper texture. Four layers, all pure CSS so nothing extra is fetched:
-   two crossing fibre grains, a set of soft vertical fold creases, and a
-   faint corner vignette so the sheet is not perfectly flat. Alphas are
-   deliberately tiny — at 0.03 it reads as tooth, at 0.1 it reads as dirt. */
-body {
-  min-height: 100dvh;
-  background-image:
-    /* fold creases — irregular spacing so it does not look like a grid */
-    linear-gradient(90deg,
-      transparent 0 22%,
-      rgba(90, 70, 40, 0.035) 22.2%, transparent 22.5%,
-      transparent 0 57%,
-      rgba(90, 70, 40, 0.03) 57.2%, transparent 57.5%,
-      transparent 0 81%,
-      rgba(90, 70, 40, 0.035) 81.2%, transparent 81.5%),
-    /* horizontal crease, one only */
-    linear-gradient(0deg,
-      transparent 0 63%,
-      rgba(90, 70, 40, 0.025) 63.15%, transparent 63.4%),
-    /* fibre grain, two angles */
-    repeating-linear-gradient(103deg,
-      rgba(120, 95, 60, 0.028) 0 1px, transparent 1px 7px),
-    repeating-linear-gradient(11deg,
-      rgba(120, 95, 60, 0.022) 0 1px, transparent 1px 11px),
-    /* vignette — sheet edges sit slightly darker than the middle */
-    radial-gradient(120% 90% at 50% 40%,
-      transparent 55%, rgba(80, 62, 35, 0.06) 100%);
-  background-attachment: fixed;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  /* nothing animated here — the texture is static by design */
-}
-
+body { min-height: 100dvh; }
 
 .prose-blog :where(h2, h3) { color: var(--color-ink); font-weight: 600; }
 .prose-blog h2 { font-size: 1.5rem; margin: 2rem 0 0.75rem; }

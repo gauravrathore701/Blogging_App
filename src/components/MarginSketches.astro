@@ -1,0 +1,99 @@
+---
+/**
+ * Random marginalia. Picks a handful of doodles from src/sketches.js and
+ * scatters them in the page margins, outside the reading column.
+ *
+ * The pick happens at BUILD time, so every page gets its own set and it
+ * stays put for that build — no layout shift, no client JS, and no risk of
+ * a doodle jumping around while you read. Rebuilding reshuffles them.
+ *
+ * Hidden below 1280px. Under that width there is no margin to draw in and
+ * they would collide with the text.
+ */
+import { sketches } from '../sketches.js';
+
+interface Props {
+  /** How many to scatter. 3 is enough to feel incidental, not decorated. */
+  count?: number;
+  /** Anything stable per page — keeps a page's doodles the same on rebuild. */
+  seed?: string;
+}
+const { count = 3, seed = Astro.url.pathname } = Astro.props;
+
+// Small deterministic PRNG so a given URL keeps its own doodles between
+// builds. Math.random() would reshuffle the whole site on every deploy.
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+let state = hash(seed) || 1;
+function rnd() {
+  state ^= state << 13; state >>>= 0;
+  state ^= state >> 17;
+  state ^= state << 5;  state >>>= 0;
+  return state / 4294967296;
+}
+
+const pool = [...sketches];
+const chosen = [];
+for (let i = 0; i < Math.min(count, pool.length); i++) {
+  chosen.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+}
+
+// Alternate sides, vary the drop and the tilt so they do not line up.
+const placed = chosen.map((s, i) => ({
+  ...s,
+  side: i % 2 === 0 ? 'left' : 'right',
+  top: 16 + Math.floor(rnd() * 58),        // vh down the page
+  rot: Math.floor(rnd() * 30) - 15,        // degrees
+  size: 84 + Math.floor(rnd() * 46),       // px
+}));
+---
+<div class="margin-sketches" aria-hidden="true">
+  {placed.map((s) => (
+    <svg
+      class="margin-sketch"
+      style={`--top:${s.top}vh; --rot:${s.rot}deg; --size:${s.size}px;` +
+             (s.side === 'left' ? 'left:calc(50% - 26rem - var(--size) - 2.5rem);'
+                                : 'right:calc(50% - 26rem - var(--size) - 2.5rem);')}
+      viewBox={s.box}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      data-sketch={s.name}
+    >
+      {s.d.map((p) => <path d={p} />)}
+    </svg>
+  ))}
+</div>
+
+<style>
+  .margin-sketches {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .margin-sketch {
+    position: absolute;
+    top: var(--top);
+    width: var(--size);
+    height: var(--size);
+    transform: rotate(var(--rot));
+    color: var(--color-ink);
+    opacity: 0.14;
+    display: none;
+  }
+
+  /* 52rem column + 2 x (sketch + gutter) needs roughly 1280px to breathe. */
+  @media (min-width: 1280px) {
+    .margin-sketch { display: block; }
+  }
+</style>
