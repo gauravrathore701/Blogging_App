@@ -32,8 +32,7 @@ body {
     linear-gradient(90deg,
       transparent 0 22%,
       rgba(90, 70, 40, 0.035) 22.2%, transparent 22.5%,
-      transparent 0 57%,
-      rgba(90, 70, 40, 0.03) 57.2%, transparent 57.5%,
+      /* the middle crease (57%) is left out on purpose — it read as a line through the page */
       transparent 0 81%,
       rgba(90, 70, 40, 0.035) 81.2%, transparent 81.5%),
     /* horizontal crease, one only */

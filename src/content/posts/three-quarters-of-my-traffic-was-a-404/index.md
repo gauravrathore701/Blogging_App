@@ -1,21 +1,21 @@
 ---
 title: "Three quarters of the traffic to my site was a 404"
-description: "The dashboard said 1.84k visitors. The origin log said 76% of requests were 404s. I wrote a blocking rule, then audited it and found it covered barely half."
+description: "Cloudflare said I had 1.84k visitors. My server's own log said 76% of requests were for pages that don't exist. I wrote a rule to block them, checked it properly, and found it only caught about half."
 date: 2026-09-06
 category: tech
 tags: ["cloudflare", "waf", "self-hosting", "logs", "security"]
-draft: true
+draft: false
 ---
 
-My Cloudflare dashboard said 1.84k unique visitors and 28.8k requests over thirty days. For a personal site on a Raspberry Pi, that reads like something is working.
+My Cloudflare dashboard said my site had 1.84k unique visitors and 28.8k requests in the last thirty days. For a personal site running on a Raspberry Pi, that felt pretty good.
 
-I want to be precise about that number before I take it apart: it comes from the Cloudflare dashboard, and I cannot re-derive it on this box. There is no API token on the Pi. Everything else in this post I measured myself today; that one figure is a dashboard reading and I am reporting it as such.
+One note before I pick that number apart. It comes from the Cloudflare dashboard, and I can't re-check it from the Pi, because there's no Cloudflare API token on it. Everything else in this post I measured myself. That one number is just what the dashboard showed me.
 
-Then I went looking for the origin log.
+So I went to look at my server's own log to see who these visitors were.
 
-## /var/log/caddy was empty
+## The log folder was empty
 
-That was the first surprise. Caddy serves the blog, so I assumed the apex access log lived there.
+First surprise. The blog runs on Caddy, so I assumed the log for the main site would be in Caddy's log folder.
 
 ```
 $ ls -la /var/log/caddy/
@@ -23,18 +23,18 @@ total 8
 drwxr-xr-x 2 caddy caddy 4096 Sep  2 01:33 .
 ```
 
-Nothing. The apex of `cursedshrine.com` is not Caddy at all — it is a small Python `http.server` running as a systemd unit, and the stdlib handler writes its access log to stdout. Which means systemd captures it, which means it is in journald and not in a file anywhere.
+Empty. It turns out the main `cursedshrine.com` page isn't served by Caddy at all. It's a tiny Python web server (`http.server`) running as a background service. That server prints its log to the screen instead of a file, so systemd catches it and stores it in the system journal. That's where the log was.
 
 ```
 $ journalctl -u homepage-cursedshrine \
     --since "2026-09-03" -o short-iso
 ```
 
-That works, with one catch I have to state before any of the numbers below, because it bounds all of them: **the unit's journal only goes back to 2026-09-03 03:00.** I wanted a week. I have four days. Every figure in this post is the window from 3 September to midday on 6 September, and I am not going to quietly call that "a week" because it made a rounder story.
+That worked, but with a catch that affects every number below: **the journal for this service only went back to 3 September, 03:00.** I wanted a week of data. I had four days. So every number in this post covers 3 September to midday on 6 September. I'm not going to round that up to "a week" just because it sounds better.
 
-## The split
+## Where the traffic went
 
-Four days, parsed out of the journal:
+Here's what four days of requests looked like:
 
 ```
 total   4750
@@ -43,9 +43,9 @@ total   4750
 200      297    6.3%
 ```
 
-Three quarters of every request to my site was a 404. Across 1,251 distinct paths, none of which exist, because this zone runs no PHP, has no WordPress and never has.
+Three out of every four requests were a **404**, meaning "that page doesn't exist". They asked for 1,251 different paths, and none of them are real. My site has no PHP and no WordPress, and it never has.
 
-The 501s are the part I did not expect, and they are the part nobody's blog post mentions. Python's `http.server` implements `GET` and `HEAD`. It does not implement `POST`. So every one of the 844 POST requests got back **501 Not Implemented**:
+The **501s** surprised me more, and I haven't seen anyone else write about them. The little Python server only knows how to answer `GET` and `HEAD` requests, which are the normal "give me a page" kind. It doesn't handle `POST`, the "here's some data" kind. So all 844 POST requests got **501 Not Implemented** back:
 
 ```
 /wordpress/wp-json/batch/v1    50
@@ -55,62 +55,62 @@ The 501s are the part I did not expect, and they are the part nobody's blog post
 /wp/wp-json/Batch/v1           25
 ```
 
-That is a fifth of my traffic in a status class the "76% were 404s" framing hides completely. It is also, if you think about it from the other side, a *better* response for the scanner than a 404. A 404 says the path is not there. A 501 says a live server received your POST, parsed it, understood the method, and declined. That is a confirmed host.
+That's almost a fifth of all my traffic, and a headline like "76% were 404s" hides it completely.
 
-## What the paths were asking for
+It's also bad news in a quiet way. From the scanner's side, a 501 is more useful than a 404. A 404 only says "nothing here". A 501 says "there's a real, working server here, it read your request, and it said no". That tells the scanner the machine is alive.
 
-The single largest family is WordPress. `wp-json` appears 452 times. `/wp/` as a path prefix, 411. `/wordpress/`, 398. `/wp-admin/install.php?step=1` — the installer, which on a fresh WordPress will happily let you point it at your own database — 37 times. `/wp-login.php` 19. `/.git/config` 15.
+## What the bots were looking for
 
-Then there are the environment files. I expected a handful of spellings. I counted the distinct paths containing `.env` in four days:
+Most of it was WordPress. `wp-json` showed up 452 times, paths starting with `/wp/` 411 times, and `/wordpress/` 398 times. `/wp-admin/install.php?step=1` came up 37 times. That's the WordPress installer, and on a fresh WordPress install it will happily let a stranger connect the site to their own database. `/wp-login.php` came up 19 times, and `/.git/config` 15.
+
+Then there were the `.env` files. These are files where apps often keep passwords and API keys. I expected bots to try a few different names. I counted how many *different* paths containing `.env` showed up in four days:
 
 ```
 330
 ```
 
-Three hundred and thirty. `/.env`, `/.env.prod`, `/.env.production`, `/.env.bak`, `/.env.backup`, `/.env.old`, `/.env.save`, `/.env.local`, `/.env.example`, `/backend/.env`, `/app/.env`, `/api/.env`, `/admin/.env`, `/laravel/.env`, `/config/.env`, `/server/.env`, `/public/.env`, `/src/.env`, `/web/.env` — and three hundred more. Somebody has a very thorough list.
+Three hundred and thirty. `/.env`, `/.env.prod`, `/.env.production`, `/.env.bak`, `/.env.backup`, `/.env.old`, `/.env.save`, `/.env.local`, `/.env.example`, `/backend/.env`, `/app/.env`, `/api/.env`, `/admin/.env`, `/laravel/.env`, `/config/.env`, `/server/.env`, `/public/.env`, `/src/.env`, `/web/.env`, and about three hundred more. Someone out there has a very long list.
 
-And one detail that turns out to matter more than anything else in this post. The same campaign hits both of these:
+One more small detail. The same bots asked for the same address with two different capitals:
 
 ```
 ...Batch/v1    75
 ...batch/v1   505
 ```
 
-Same endpoint, two capitalisations. If you write a matching rule that is case-sensitive, you catch 75 of 580. Hold onto that.
+Same target, different capitalisation. Bots mix up their capitals, so a blocking rule shouldn't care about uppercase versus lowercase. Keep that in mind for later.
 
-## The instrument was lying
+## My site said it had a robots.txt. It didn't.
 
-Here is the thing I did not go looking for. Sort the 404s by frequency and the top two entries are not attack paths at all:
+I wasn't looking for this one. When I sorted the 404s by how often they happened, the top two weren't attacks at all:
 
 ```
 /robots.txt    88
 /sitemap.xml   57
 ```
 
-Those are the two most-requested missing files on my site. Crawlers were asking, constantly, and getting nothing.
+These were the two most-requested missing files on my whole site. Search engine crawlers kept asking for them and kept getting nothing.
 
-Except that they were not getting nothing. Fetch `https://cursedshrine.com/robots.txt` from outside and it returns **200**. Fetch it at the origin and it returned **404**. Both were true at the same time, because Cloudflare's Managed `robots.txt` feature was synthesising a file I had never written — a content-signals preamble about AI training and search indexing, and no `Sitemap:` line at all.
+Except, from the outside, it looked fine. If you opened `https://cursedshrine.com/robots.txt` in a browser, you got a real page back (a 200). But on my actual server, the same file was a 404. Both were true at once, because Cloudflare has a feature that makes up a `robots.txt` for you if you don't have one. Its version was a short note about AI training and search indexing, and it didn't mention my sitemap at all.
 
-So for months the sentence "my site has a robots.txt" was accurate and completely useless. The file existed, at the edge, saying nothing that pointed at any of my content.
+So "my site has a robots.txt" was technically true all along, and completely useless. The file existed, but only on Cloudflare's side, and it didn't point crawlers to any of my content.
 
-If you have read my post on the Astro `base` bug that quietly broke my sitemap, this is the same failure wearing different clothes: the artefact exists, something reports success, and nothing that matters can find it.
+If you read my post about the Astro `base` setting that quietly broke my sitemap, this is the same kind of problem. The file exists, something says everything is fine, and the things that need it still can't find it.
 
-I wrote a real one, with real sitemap lines, and served it from the origin. Both files flipped in the same second:
+So I wrote a real `robots.txt` that points to my sitemaps, and served it from my own server. Both files started working in the same second:
 
 ```
 2026-09-06 12:26:20 IST /robots.txt  200
 2026-09-06 12:26:20 IST /sitemap.xml 200
 ```
 
-The edge now serves my file, with two `Sitemap:` lines in it.
+Cloudflare now serves my file, with two `Sitemap:` lines in it.
 
-## The rule
+## The blocking rule
 
-Cloudflare's free plan gives you five WAF custom rules. I used one, matching the URI path against six patterns — `wp-`, `/wp/`, `wordpress`, `.env`, `.git`, and anything ending `.php` — with the whole expression wrapped in `lower()`.
+Cloudflare's free plan lets you create five custom firewall rules. I used one. It blocks any request whose path contains one of six patterns: `wp-`, `/wp/`, `wordpress`, `.env`, `.git`, or anything ending in `.php`. I wrapped the whole thing in `lower()`, which turns the path into lowercase before checking it. That way `/WP-LOGIN.PHP` gets caught just like `/wp-login.php`.
 
-That `lower()` is not decoration. It is the 75-versus-505 split from earlier. Without it the rule catches an eighth of that campaign and you conclude it is working.
-
-Before enabling anything that returns 403, I enumerated the paths my own stack actually serves and checked that none of them matched. Then I probed the live edge:
+Before switching on anything that blocks people, I listed every path my own sites actually use, and checked that none of them matched the patterns. Then I tested the live site from the outside:
 
 ```
 /wp-login.php                403
@@ -124,20 +124,24 @@ Before enabling anything that returns 403, I enumerated the paths my own stack a
 /                            200
 ```
 
-The uppercase variant is blocked, so `lower()` is doing its job. The real paths still answer. That is the method worth stealing, and it is more important than my particular patterns: **a blocking rule you cannot roll back confidently is worse than the scanning it stops.** Enumerate what you serve, prove none of it matches, and keep the before-and-after table so you can tell later whether the rule or something else changed the numbers.
+**403** means "blocked", and **200** means the page loaded normally. The uppercase version is blocked too, so `lower()` works, and my real pages still load.
 
-## Then I audited my own fix
+That process matters more than my exact patterns. **A blocking rule you can't confidently undo is worse than the scanning it stops.** Write down what your site actually serves, prove the rule doesn't touch any of it, and keep a before-and-after table. That way, if the numbers change later, you can tell whether it was the rule or something else.
 
-This is where I expected to write a satisfied paragraph and stop. Instead I replayed the rule's six patterns against all 3,607 real 404s in the log, to see how many of them it would actually have caught.
+## Then I checked my own fix
+
+This is where I expected to write "and it worked" and finish the post. Instead, I ran the rule's six patterns against all 3,607 real 404s from the log, to see how many it would actually have blocked.
 
 ```
 would be blocked   1900   53%
 would sail past    1707   47%
 ```
 
-Just over half.
+Only just over half.
 
-About 145 of the misses are `robots.txt` and `sitemap.xml`, which are partly honest crawlers and which I now serve anyway. That leaves roughly 1,562 hostile requests that my new rule does not touch. I pulled the top ones and probed each at the edge to confirm they are still reaching my origin — a 404 here means it got through, where a 403 would mean it was stopped:
+About 145 of the ones that got through were `robots.txt` and `sitemap.xml`. Those are partly real search engines, and I serve those files now anyway. That still leaves around 1,562 hostile requests my rule doesn't touch.
+
+I took the most common ones and tested each against the live site. Here, a **404** means the request got past Cloudflare and reached my server. A 403 would have meant it was blocked.
 
 ```
 path                     edge
@@ -151,15 +155,20 @@ path                     edge
 /settings.json            404
 ```
 
-Read that list again. `/.aws/credentials` is where the AWS CLI keeps long-lived access keys. `/.s3cfg` is s3cmd's config, same story. `/_ignition/health-check` is the Laravel debug page behind CVE-2021-3129, which was remote code execution. `/actuator/env` is the Spring Boot actuator endpoint that will dump your environment, secrets included.
+Look at that list again, because these are the scary ones:
+
+- `/.aws/credentials` is where Amazon's command-line tool keeps long-lasting access keys.
+- `/.s3cfg` is the config file for s3cmd, a popular tool for Amazon's S3 storage. Same idea: keys.
+- `/_ignition/health-check` is a Laravel debug page with a known security hole (CVE-2021-3129) that let attackers run their own code on the server.
+- `/actuator/env` is a Spring Boot page that can print out all of an app's settings, passwords included.
 
 None of them contain `wp-`, `.env`, `.git` or `.php`.
 
-I had written a WordPress-shaped rule, because WordPress-shaped scanning is what dominated the histogram. It does block that, well. But the loudest traffic and the most dangerous traffic were never the same traffic, and sorting by volume put exactly the wrong thing at the top of my list.
+I had written a rule shaped around WordPress, because WordPress scans were the biggest thing in my log. It blocks those well. But the *loudest* traffic and the most *dangerous* traffic weren't the same traffic. Sorting by volume put the wrong thing at the top of my to-do list.
 
-## What I am not going to claim
+## What I'm not going to claim
 
-The 404 counts fall off a cliff across my four days:
+The number of 404s dropped a lot over those four days:
 
 ```
 2026-09-03  2033 total  1774 404
@@ -168,7 +177,7 @@ The 404 counts fall off a cliff across my four days:
 2026-09-06   114 total    62 404  (partial)
 ```
 
-That looks like a rule working. It is not evidence that a rule worked, and I am not going to present it as one. Break the same data down by hour and almost all of the volume lives in three of them:
+That looks like the rule working. It isn't proof of that, and I won't pretend it is. Split the same data by hour, and almost all of it sits in just three hours:
 
 ```
 09-04 01h  799
@@ -176,24 +185,24 @@ That looks like a rule working. It is not evidence that a rule worked, and I am 
 09-05 22h  275
 ```
 
-Every other hour in four days is single digits. With bursts that size and a window that short, "the campaign ended" fits the data exactly as well as "the rule started". I would need weeks to separate those, and I have days. Unresolved.
+Every other hour in those four days had single-digit numbers. With traffic that bursty and a window that short, "the bots just stopped" explains the drop just as well as "my rule stopped them". I'd need weeks of data to tell the difference, and I have days. So I don't know.
 
-While I am listing limits, here is the one that shaped the entire investigation. Every line in that origin log has the same remote address:
+While I'm listing what I can't see, here's the biggest one. Every single line in my server's log shows the same visitor address:
 
 ```
 127.0.0.1
 ```
 
-Requests arrive through a cloudflared tunnel, and Python's stdlib handler logs the socket peer — which is the tunnel — rather than the `CF-Connecting-IP` header the real client address arrives in. So at this origin there is no IP, no ASN, no geography, no rate-per-source. Nothing. Path histograms were not my preferred instrument; they were my only one.
+That's the Pi talking to itself. Visitors reach my site through a Cloudflare tunnel, so from the Python server's point of view, every request comes from the tunnel on the same machine. Cloudflare does pass along the real visitor address in a header (`CF-Connecting-IP`), but this simple server doesn't log it. So I get no IP addresses, no idea which network or country anything came from, and no way to see who's sending the most requests. Counting paths wasn't the tool I wanted. It was the only one I had.
 
-There is a related trap in the 200s. I counted 226 requests to `/` that returned 200 and briefly thought that was my human traffic. But `/?rest_route=/wp/v2/posts/999999` also returns 200, because the Python server drops the query string and serves the index — so around sixty bot probes are sitting in my log looking like successful page views. The real number of human visits is somewhere below 226 and this log cannot tell me where.
+There's a similar trap in the successful requests. I counted 226 visits to my home page (`/`) that loaded fine, and for a moment I thought those were my real human visitors. But a bot request like `/?rest_route=/wp/v2/posts/999999` also loads fine, because the Python server ignores everything after the `?` and just shows the home page. So around sixty bot probes are sitting in my log disguised as normal page views. The real number of human visits is lower than 226, and this log can't tell me by how much.
 
-## The number that means something
+## The number that actually means something
 
-Cloudflare zone analytics is a *zone* metric. It counts every subdomain, every bot, every scanner, and it counts me — including the night I streamed a few gigabytes of my own media through my own tunnel and watched my traffic graph spike. That is not an audience measurement and was never designed to be one.
+Cloudflare's analytics count everything that touches the whole domain. That's every subdomain, every bot, every scanner, and me. It even counts the night I streamed a few gigabytes of my own videos through my own tunnel and watched my traffic graph jump. It was never meant to count an audience, and it doesn't.
 
-The one honest thing I can say is that `robots.txt` stops none of what I have described. Exploit scanners do not read it. I have to say that out loud because a polite robots.txt is the first fix almost everyone reaches for, and against this traffic it does exactly nothing.
+One more thing I need to say plainly: a `robots.txt` file stops none of this. Attack scanners don't read it. I'm spelling that out because a polite `robots.txt` is the first thing most people reach for, and against this kind of traffic it does nothing at all.
 
 Once you take out the bots, the probes, the 501s and me, my personal site gets something like thirty visits a day.
 
-That is fine. It is a real number, which is more than the other one was.
+That's fine. It's a real number, which is more than I could say for the other one.

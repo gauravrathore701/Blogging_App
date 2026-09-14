@@ -1,61 +1,79 @@
 ---
 title: "Self-hosting when the hardware got expensive"
-description: "The 16 GB Pi 5 went from $120 to $305 in twenty months. The obvious response is to rent instead — except rent went up 31% the same year, from the same cause. Both columns inflated."
+description: "The 16 GB Pi 5 went from $120 to $305 in twenty months, so obviously you should rent a server instead. Small problem: rent went up too, for exactly the same reason."
 date: 2026-09-06
 category: tech
 tags: ["self-hosting", "raspberry-pi", "cost", "hardware", "hetzner"]
-draft: true
+draft: false
 ---
 
-The 16 GB Raspberry Pi 5 launched at $120 in January 2025. Today it is
+The 16 GB Raspberry Pi 5 launched at $120 in January 2025. It now costs
 $305.
 
-That is four price rises in twenty months — $120, then $145 in December
-2025, then $205 in February 2026, then $305 in April — and Raspberry Pi
-has been unusually direct about why. Their own wording, from the April
-announcement, is *"a seven-fold increase over the last year in the
-price of the LPDDR4 DRAM"*.
+It didn't happen all at once. It went up in steps, the way a boiling
+frog gets warm, except the frog is your wallet:
 
-Two and a half times the launch price. Up 154%.
+```
+Jan 2025   $120   launch
+Dec 2025   $145
+Feb 2026   $205
+Apr 2026   $305
+```
 
-So the obvious conclusion is that the cheap-home-server era is over and
-you should rent a VPS instead.
+That's two and a half times the launch price, up 154%, for a board
+that hasn't gained a single new feature in the meantime.
 
-I want to check that conclusion, because I do not think the people
-reaching it have priced the other side.
+To their credit, Raspberry Pi didn't hide behind "market conditions" or
+"supply chain headwinds". They named the culprit. From the April
+announcement: *"a seven-fold increase over the last year in the price
+of the LPDDR4 DRAM"*.
 
-## Rent went up too, from exactly the same cause
+Seven-fold. Memory chips had a better year than most investment
+portfolios.
 
-Hetzner raised prices on its Arm line effective **15 June 2026**:
+The internet's conclusion writes itself: the cheap home server is dead,
+go rent a VPS like a normal person.
+
+I'd like to check that before I agree with it, because I don't think
+the people saying it have looked at the other half of the receipt.
+
+## Plot twist: rent went up too
+
+Hetzner raised prices on its Arm servers, effective **15 June 2026**:
 
 ```
 CAX21   EUR  7.99  ->  10.49   (+31%)
 CAX31   EUR 15.99  ->  20.99   (+31%)
 ```
 
-OVH's VPS-1 went up around 55% in the same window.
+OVH's VPS-1 reportedly went up around 55% in the same window. (That one
+comes from a secondary source. I haven't confirmed it on OVH's own
+site.)
 
-Same year, same DRAM shortage, same direction. A VPS is mostly memory
-you are renting; when memory gets seven times more expensive, the
-people renting it to you notice.
+Same year, same DRAM shortage, same direction. It turns out a VPS is
+mostly memory with a monthly invoice stapled to it. When memory gets
+seven times more expensive, the company renting it to you notices. Then
+you notice.
 
-This is the part that seems to be missing from every version of this
-comparison I have read in 2026: people are comparing **today's**
-hardware price against **last year's** rent price, and concluding that
-renting won. It did not win. Everything got worse together.
+Most of the "just rent it" takes I've read this year make the same quiet
+mistake. They compare **this year's** hardware price against **last
+year's** rent. Of course renting wins that fight. It's boxing a ghost.
 
-That does not settle the question. It just means the question is still
-open, which is more than most write-ups will tell you.
+Renting didn't win. Everything just got worse at the same time, which is
+less satisfying but more accurate. The question is still open, and
+that's already more than most write-ups will admit.
 
-## What is actually on the box
+## What's actually running on this thing
 
-Any honest version of this has to start with the workload, so here is
-mine. A Raspberry Pi 5, 16 GB, Debian 13, kernel `6.12.75+rpt-rpi-2712`,
-four cores at 1.8 GHz. Twenty or so hand-written application units,
-behind one Cloudflare tunnel, with no inbound ports open.
+You can't argue about whether a server is worth it without saying what
+it does all day, so here's mine. A Raspberry Pi 5 with 16 GB, Debian 13,
+kernel `6.12.75+rpt-rpi-2712`, four cores topping out at 2.4 GHz. About
+twenty services I set up by hand, all behind one Cloudflare tunnel, with
+zero ports open to the internet.
 
-Measured resident memory per unit, summed over each unit's
-`cgroup.procs` on 2026-09-05:
+Here's how much memory each one actually holds. I measured it on
+2026-09-05 by adding up the resident memory of every process in each
+service's cgroup:
 
 ```
 CI server (Java)            679 MiB
@@ -76,20 +94,22 @@ auth API (Rust)               8 MiB
 mail service (Rust)           6 MiB
 ```
 
-Plus MongoDB 8 in Docker at 228 MiB, bound to loopback, holding a
-457 MB dataset with a deliberately capped 0.5 GB WiredTiger cache.
+Plus MongoDB 8 in Docker at 228 MiB, listening only on localhost, holding
+a 457 MB dataset. Its WiredTiger cache is deliberately capped at 0.5 GB
+so it doesn't get ideas.
 
 `*` That 433 MiB includes the CLI session that was *taking these
-measurements*. It is a research session, not an idle footprint, and I
-did not separately measure the bot at rest. Do not read it as steady
-state.
+measurements*, which is a bit like weighing yourself while holding the
+scale. It's a busy research session, not the bot sitting idle, and I
+didn't measure the idle case separately. Don't read it as steady state.
 
-The spread is the interesting part. The two Rust services do their jobs
-in 6 and 8 MiB. The two JVMs need 679 and 320. That is a hundredfold
-difference on the same board, for work of broadly comparable
-importance, and it is entirely a language-runtime choice.
+The spread is the fun part. The two Rust services do their jobs in 6 and
+8 MiB. The two Java services need 679 and 320. That's roughly a
+hundredfold difference, on the same board, for jobs of broadly similar
+importance, and the only thing explaining it is the language runtime.
+Rust packed a carry-on. Java brought the wardrobe.
 
-## The number this whole post turns on
+## The number this whole post hangs on
 
 ```
 $ free -h
@@ -98,178 +118,181 @@ Mem:     15Gi  2.5Gi  8.3Gi       13Gi
 Swap:   2.0Gi     0B  2.0Gi
 ```
 
-Two and a half gigabytes used, of about sixteen. Thirteen available.
-Swap configured and completely untouched. Load average 0.12 across four
-cores — the box is roughly 97% idle, at full clock, 53.8 °C, with
-`vcgencmd get_throttled` reporting `0x0`.
+2.5 GiB used, out of about 16. 13 GiB available. Swap is set up and has
+never been touched.
 
-I re-checked `free -h` on 2026-09-06 after a reboot and it says
-substantially the same thing: 2.3 GiB used, 13 GiB available.
+The load average is 0.12 across four cores, so the machine is about 97%
+idle. It's sitting at 53.8 °C, and `vcgencmd get_throttled` reports
+`0x0`, meaning no throttling whatsoever. It isn't working hard. It's
+barely working.
 
-So here is the uncomfortable finding, and it is about my own purchase
-rather than about Raspberry Pi's pricing: **the expensive thing about
-this board is the thing my workload does not use.** An 8 GB Pi 5 would
-run all of this with room to spare. The extra memory I paid for is
-sitting there being available.
+I re-ran `free -h` on 2026-09-06 after a reboot, in case the first one
+was a fluke. Same story: 2.3 GiB used, 13 GiB available.
 
-If you are pricing a home server right now on the basis that RAM has
-become the expensive component, the first question is not "which board"
-but "how much of it will actually be resident". Mine answered that
-question after the money was spent.
+So here's the uncomfortable bit, and it's about my own purchase rather
+than Raspberry Pi's pricing: **the expensive part of this board is
+exactly the part I don't use.** An 8 GB Pi 5 would run everything above
+with room to spare. The extra memory I paid for is doing an excellent
+job of being available. World-class availability. Never once busy.
+
+If you're pricing a home server now that RAM is the expensive part, the
+first question isn't "which board?" It's "how much memory will my stuff
+actually use?" I did answer that question. I just answered it after
+paying.
 
 ## What it costs to run
 
-**Power.** The Pi 5 exposes per-rail current and voltage through its
-PMIC. Ten samples, two seconds apart, summing current x volts across
-all rails, at the idle load described above:
+**Power.** The Pi 5 can report the current and voltage on each of its
+internal power rails. I took ten readings, two seconds apart, multiplied
+current by voltage on every rail and added them up, with the box idling
+as described above:
 
 ```
 2.231 2.254 2.260 2.445 2.469
 2.508 2.707 2.259 2.185 2.205  W
 ```
 
-Mean **2.35 W**, range 2.19-2.71 W. The largest single rail is
-`VDD_CORE` at about 1.04 W.
+Average **2.35 W**, range 2.19-2.71 W. The hungriest rail is `VDD_CORE`,
+at about 1.04 W.
 
-Four things that measurement is not. It is rail power downstream of the
-PMIC, so it excludes power-supply conversion loss — the Pi 5 does not
-expose input current, and **I have not put a plug meter on this
-machine**. The USB ports are fed ahead of these rails, so the attached
-spinning drive is not in that figure. The 27 W supply fitted is a
-rating, not a draw. And the monitor on the desk is not a server cost
-and appears nowhere.
+Before anyone screenshots that number, here are four things it is *not*:
 
-Working estimate: **about 5 W at the wall** — roughly 2.8 W after PSU
-losses plus about 2 W for the drive. I will show the answer across
-3-7 W, because the conclusion does not change anywhere in that range.
+- **Not wall power.** It's measured after the power supply, so the
+  supply's own losses aren't in it. The Pi 5 can't report its input
+  power, and **I haven't put a plug meter on this machine.**
+- **Not the hard drive.** The USB ports are fed before those rails, so
+  the spinning drive plugged into it isn't counted.
+- **Not 27 W.** That's printed on the power supply. It's what the supply
+  *can* deliver, not what the Pi draws.
+- **Not the monitor.** The screen on my desk isn't a server cost, so it
+  doesn't appear anywhere.
 
-**Electricity, at a real tariff.** MSEDCL is the distribution licensee
-here. From the MERC multi-year tariff order dated 28 March 2025, LT
-Residential, FY 2026-27, the 101-300 unit slab is ₹9.40 energy plus
-₹1.20 wheeling = **₹10.60/kWh**, before a residential electricity duty
-of 16%.
+My working estimate is **about 5 W at the wall**: roughly 2.8 W once you
+add power-supply losses, plus about 2 W for the drive. I'll run the
+maths from 3 W to 7 W, because the conclusion doesn't change anywhere in
+that range.
+
+**Electricity, at a real tariff.** MSEDCL is the electricity distributor
+here. According to the MERC multi-year tariff order dated 28 March 2025,
+for LT Residential in FY 2026-27, the 101-300 unit slab is ₹9.40 energy
+plus ₹1.20 wheeling = **₹10.60/kWh**, before a 16% residential
+electricity duty.
 
 ```
 5 W x 8,766 h / 1000 = 43.8 kWh/year
 43.8 x ₹12.30 (incl. duty) = ₹539/yr
 ```
 
-At the ends of the range: 3 W is ₹323/year, 7 W is ₹755/year.
+At either end of the range: 3 W is ₹323 a year, 7 W is ₹755.
 
-The same order publishes the tariff trajectory to FY2029-30, which is
-unusually convenient for a five-year total. Running it out:
+That same order also publishes tariffs all the way out to FY 2029-30,
+which is very considerate of it if you happen to want a five-year total.
+So:
 
-**Five years of electricity for this entire box is about ₹2,723 — call
-it $29.** Less than the active cooler cost.
+**Five years of electricity for this entire box comes to about ₹2,723,
+or roughly $29.** That's under a tenth of what the board itself costs
+today.
 
-So the "but think of the electricity" objection to self-hosting is, at
-this power level and this tariff, arithmetically dead. Note also the
-direction of travel: that same order headlines an overall *reduction*
-in residential tariffs of 10-12%. Electricity here got cheaper while
-the board got 154% more expensive.
+The classic "but what about the electricity?" objection is, at this
+wattage and this tariff, dead on arrival. Better still, that same order
+headlines an overall *reduction* in residential tariffs of 10-12%.
+Electricity got cheaper while the board got 154% more expensive. The one
+bill that was supposed to be scary is the one that behaved.
 
-**Storage wear.** About 7.2 GiB/day written to the microSD card. I
-cannot give you a remaining-life figure: this card exposes `name`,
-`manfid`, `oemid`, `serial`, `date`, `fwrev` and `hwrev`, and does not
-expose `life_time` or `pre_eol_info`, so the health registers are
-simply unavailable. Take the write rate and compute against whatever
-endurance rating your own card claims.
+**Bandwidth.** About 10.4 GiB a month going out.
 
-**Egress.** About 10.4 GiB/month.
+## Why I'm not handing you a verdict
 
-## The comparison, and why I am not going to hand you a verdict
+This is the part where posts like this unveil a table with the winner in
+bold. I'm not going to, and it's not because I'm being mysterious.
 
-This is where most posts of this type produce a number and a winner. I
-am not going to, and the reason is specific rather than coy.
+A fair build-versus-rent answer needs three numbers I haven't measured:
 
-An honest build-versus-rent answer needs three inputs I do not have
-measured:
+1. **Real power at the wall**, not rail power. Everything built on that
+   5 W estimate inherits its error.
+2. **A real price for the alternative.** The usual alternative is an
+   Intel N100 mini PC, and I haven't priced one from an actual shop
+   listing I'd stand behind.
+3. **How much that mini PC draws at idle**, which is the entire basis of
+   any "efficiency" argument.
 
-1. **Wall power, not rail power.** Everything downstream of the 5 W
-   estimate inherits its error.
-2. **A real price for the thing you would buy instead.** An N100 mini
-   PC is the usual alternative and I have not priced one from a named
-   retail listing I can stand behind.
-3. **That machine's actual idle draw**, which is the entire basis of
-   any efficiency argument.
+If I made those up, you'd get a very confident-looking table that's
+really just my gut feeling wearing decimal points. So here's the method
+instead, plus my numbers where I have them.
 
-Inventing any of those three would produce a confident-looking table
-that is really just my prior with decimal places on it. So instead,
-here is the method, and my inputs where I have them.
+**Do the sum yourself:**
 
-**Run it yourself:**
+- **Your hardware price**, delivered, in your currency. Mine is $305 list
+  today. The one I actually own was bought earlier and cost less.
+- **Your marginal electricity rate**, including duty. That's the slab
+  you're actually *in*, not the average.
+- **The idle power gap** between the two machines you're comparing.
+- **The rent for the equivalent VPS as of this month**, plus the extras
+  that make a €10.49 VPS not cost €10.49: egress overage, block storage,
+  an IPv4 address, backups.
 
-- Your hardware price, delivered, in your currency. Mine is $305 list
-  today; the box I actually own was bought earlier and cost less.
-- Your marginal electricity rate, including duty — the slab you are
-  *in*, not the average.
-- The idle wattage gap between the two machines you are comparing.
-- The rent price of the equivalent VPS **as of this month**, plus the
-  line items that make a €10.49 VPS not cost €10.49: egress overage,
-  block storage, an IPv4 address, backups.
+Then ask one question: how many years of power savings does it take to
+pay back the price difference?
 
-Then the only question that matters: how many years of the power
-difference does it take to pay back the price difference?
+For a Pi against a typical x86 mini PC, at the power gaps people usually
+quote and the tariff above, the payback comes out in **decades**. That's
+longer than either machine will realistically live. Even a generous 15 W
+gap, against a price gap of about $155, only gets it down to around nine
+years. Treat those as the shape of the answer, not a figure: the $155
+rests on a price range I haven't checked, and inputs 2 and 3 are
+unmeasured.
 
-For the Pi against a typical x86 mini PC, at a wattage gap in the range
-people usually quote and at the tariff above, that payback runs to
-**decades** — longer than either machine will plausibly live. Even a
-generous 15 W gap lands somewhere around nine years. I am stating that
-as the shape of the result rather than a figure, precisely because
-inputs 2 and 3 are unmeasured.
+The shape holds even if the exact number doesn't. At single-digit watts
+and ₹12/kWh, electricity simply isn't the thing that decides this.
+Anyone telling you a home server is cheap *because it sips power* has
+the right answer for the wrong reason. The electricity was never the
+expensive part. The board is.
 
-The shape is robust even though the number is not. At single-digit
-watts and ₹12/kWh, power is simply not the deciding variable. Anyone
-telling you a home server is cheap *because it sips electricity* has
-the right conclusion for the wrong reason — the electricity was never
-the expensive part. The board is.
+## Where renting just wins
 
-## Where renting simply wins
+I'd rather point these out myself than pretend this box is perfect.
 
-I would rather name these than pretend the box is optimal.
+**This blog.** A static blog could live on any free static host, and
+those free tiers are genuinely generous. It lives here because I wanted
+the whole pipeline on hardware I control. That's a preference, not an
+economic argument, and I've made my peace with it.
 
-**A static blog.** This one could live on any free static host, and the
-free tiers are genuinely generous. It lives here because I wanted the
-whole pipeline on hardware I control, which is a preference, not an
-economic argument.
+**Tiny hobby sites.** Four of the static apps in that table use 19-70 MiB
+each and get basically no visitors. They're on the Pi because the Pi was
+already there. Squatters' rights.
 
-**Small hobby sites.** Four of the static apps in that table cost
-19-70 MiB each and get essentially no traffic. They are on a Pi because
-the Pi already exists.
+**CI.** The Java CI server uses 679 MiB, more than anything else on the
+machine, to run three jobs. Three. That's the clearest loss on this box
+by a mile, and it deserves its own post rather than a paragraph here.
 
-**CI.** The Java CI server is 679 MiB — the single largest consumer on
-the machine — for three jobs. That is the clearest loss on this box by
-a distance, and it deserves its own post rather than a paragraph here.
+## What this doesn't settle
 
-## What this does not settle
-
-Availability, mostly. I cannot give you an uptime figure: journal
-retention on this box only reaches back to 30 August 2026, and there
-were at least two multi-hour outages in the last month. Anyone quoting
-you nines for a Pi in a spare room, without a UPS and on domestic
+Mostly, uptime. I can't give you an availability figure, because when I
+measured, the system journal only went back to 30 August 2026. Anyone
+quoting you "five nines" for a Pi in a spare room, with no UPS, on home
 broadband, is quoting you a vibe.
 
-And there is the honest non-financial part. A home server is a hobby
-with a cost basis. The reason I run one is not that the spreadsheet
-says to; it is that I like knowing where my things are and being able
-to read the logs. That reason survives a price rise, which is
-convenient, because there has been a large one.
+Then there's the honest, non-financial part. A home server is a hobby
+with a cost basis. I don't run one because a spreadsheet told me to. I
+run it because I like knowing where my stuff lives and being able to
+read the logs. Conveniently, that reason survives a price rise. Which is
+lucky, because there's been a big one.
 
-The useful finding here is narrower and I will restate it plainly:
-**"the Pi got expensive, so rent instead" is a non-sequitur.** Rent got
-expensive too, from the same DRAM crunch, in the same year, by about a
-third. Whatever you decide, decide it against this month's prices on
-both sides.
+So here's the one thing I'll say with confidence: **"the Pi got
+expensive, so rent instead" doesn't follow.** Rent got more expensive
+too, from the same DRAM crunch, in the same year, by about a third.
+Whatever you pick, compare it against *this month's* prices on both
+sides, not last year's.
 
 ---
 
 *Measured on this box 2026-09-05, re-checked 2026-09-06: Raspberry Pi 5
 Model B Rev 1.1, Debian 13 (trixie), kernel `6.12.75+rpt-rpi-2712`,
 16 GB. Hardware prices from raspberrypi.com and Hetzner's own price
-adjustment notice, fetched 2026-09-05 — re-check both before relying on
-them, since one of them moved four times while I was writing this.
-Tariffs from the MERC MYT order dated 28 March 2025. Electricity duty
-of 16% is from secondary sources and has not been checked against a
-statute or a bill. Wall power, the N100 comparison figures and this
-box's annual availability are not measured, and nothing here asserts
-them.*
+adjustment notice, fetched 2026-09-05. Re-check both before relying on
+them; one of them has gone up three times since launch. OVH's increase
+is from a secondary source. Tariffs from the MERC MYT order dated 28
+March 2025. The 16% electricity duty is from secondary sources and has
+not been checked against a statute or a bill. Wall power, the N100
+comparison figures and this box's annual availability are not measured,
+and nothing here asserts them.*
