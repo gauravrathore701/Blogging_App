@@ -1,13 +1,17 @@
 ---
-title: "My backup script took a 0600 secret and wrote it into a 0644 file"
-description: "I went looking for a cron job that was creating GitHub repos behind my back. It never did. What it was actually doing was quieter, and it had already been cleaned up once."
-date: 2026-09-06
+title: "I cleaned my GitHub token out of my repos. A cron job quietly put it back."
+description: "A daily sync script copied my GitHub token into git config files anyone on the machine could read, and logged nothing. I'd already cleaned it up once. How it happened, and the fix."
+date: 2026-09-14
 category: tech
 tags: ["automation", "security", "cron", "git", "self-hosting"]
-draft: true
+draft: false
 ---
 
-Here are three files on my Raspberry Pi, side by side:
+A script runs on my Raspberry Pi every morning at 08:00 and backs up my projects to GitHub. When it found a project that wasn't connected to GitHub yet, it connected it for me. To do that, it built a GitHub address with my **personal access token** (basically a password for my GitHub account) pasted right into it, and saved that address in the project's `.git/config` file.
+
+My token file is locked so only I can read it. The `.git/config` files are readable by every user on the machine. The script didn't log a single line about any of this. And the worst part: I had already found and cleaned this same token out of seven projects two months earlier. The script simply put it back into two new ones.
+
+Here's the evidence, three files side by side:
 
 ```
 $ stat -c '%A %n' ~/.github_token \
@@ -18,78 +22,52 @@ $ stat -c '%A %n' ~/.github_token \
 -rw-rw-r-- .../mongo-pi/.git/config
 ```
 
-The first one is a GitHub personal access token. I set those
-permissions on purpose. The other two are files an unattended job wrote
-a copy of that token into, at eight in the morning, while I was asleep.
+If you don't read Linux permissions: `rw-------` means only I can read the file. `rw-r--r--` and `rw-rw-r--` mean anyone on the machine can. The first file is the token, locked down on purpose. The other two are where the script copied it.
 
-It logged nothing about it, because that branch of the script has no
-log statement in it.
+## What I thought was going on (I was wrong)
 
-That is not the thing I set out to investigate.
+I didn't go looking for a token problem. I went looking for a different one.
 
-## The wrong question
+I believed this script had been creating GitHub repositories on its own. I remembered repos showing up that I didn't remember making, and the script clearly contained `gh api user/repos`, the command that creates one. That was enough to convince me.
 
-What I actually believed was that my daily sync script had been
-creating GitHub repositories without being asked. I had a memory of
-repos appearing that I did not remember making, and a script that
-plainly contained `gh api user/repos`, and that was enough to convince
-me.
+The logs proved me wrong almost immediately.
 
-It is wrong, and the logs say so immediately.
-
-The job runs from cron:
+The job runs from cron, Linux's built-in scheduler:
 
 ```
 0 8 * * * /home/gaurav/routines/git_sync.sh \
   >> .../logs/git_sync_cron.log 2>&1
 ```
 
-There are 78 per-day log files, 2026-06-20 through 2026-09-05, with no
-missing day. The first line of the cron log is:
+Its first scheduled run was on **2026-06-21**:
 
 ```
 [08:00:01] ===== Git Sync Start
            2026-06-21 08:00 =====
 ```
 
-So cron's first run was **2026-06-21**. Every repository I was
-suspicious about was created on **2026-06-20**, between 11:45:43 and
-11:47:32 — six of them, inside a single run that lasted one minute and
-forty-nine seconds. I can line the GitHub creation timestamps up
-against the log lines that announced each folder, and they land three
-to twenty-one seconds apart, in order.
+Every repo I was suspicious of was created on **2026-06-20**, the day before. All six were made between 11:45:43 and 11:47:32, in a single run of the script that lasted under two minutes. GitHub's creation times line up with the script's log, in order, a few seconds apart.
 
-That was me. I ran it by hand, in the foreground, sixteen minutes after
-installing `gh` on the box.
+That run was me. I started it by hand, 16 minutes after installing GitHub's command-line tool on the Pi.
 
-The unattended job did reach the create path, twice, months later. Both
-times the creation **failed**. Both of those repositories return 404
-today.
+The scheduled job did try to create a repo later, twice. Both attempts **failed**, and neither repo exists on GitHub.
 
-So the count of GitHub repositories created by a job running without me
-is zero. I had been carrying a false story about my own machine for two
-months, and I would have published it if I had written the post I
-originally intended to write.
+So the number of repos created by the job while I wasn't around is zero. I'd believed a false story about my own machine for two months, and I nearly published it.
 
-## What the job is allowed to do to a folder it has never seen
+## How the script decided what to touch
 
-The interesting question turned out to be a different one: *what list
-does this thing work from?*
+The better question turned out to be: *which projects does this script work on?*
 
-It does not have a list. It has a glob.
+The answer was "all of them". There was no list. It just looped over every folder in my projects directory:
 
 ```bash
 for dir in "$PROJECTS_DIR"/*/; do
   name=$(basename "$dir")
 ```
 
-`PROJECTS_DIR` is `/home/gaurav/Projects`. Membership in the set of
-things this job acts on is decided by the filesystem, at 08:00, with
-nobody present. And `name` — the directory name, whatever it happens to
-be — is used directly as the GitHub repository name later on. Nothing
-validates or normalises it.
+So whatever folders existed at 08:00 got processed, with nobody watching. The folder's name was also used, unchanged, as the name of the GitHub repo.
 
-Here is what a brand-new folder got:
+Here's what it did with a folder that wasn't a git project yet:
 
 ```bash
 if [ ! -d "$dir/.git" ]; then
@@ -109,64 +87,48 @@ if [ ! -d "$dir/.git" ]; then
     "$(https_url "$name")"
 ```
 
-`git init`, a commit whose message was written by an AI, a private
-repository on my account, and a push. Eleven lines, no confirmation
-step, and a folder that had existed for a few hours as the only input.
+In plain terms: turn the folder into a git project, commit everything (with a commit message written by an AI), create a private GitHub repo, connect the folder to it, and push. There was no confirmation step. A folder that had existed for a few hours was enough to trigger all of it.
 
-Note the error handling. The `gh api` call ends in `|| true`, and its
-stderr is funnelled through two `grep -v`s before being thrown away.
-The API error that would have explained everything — every morning, for
-months — was deliberately swallowed.
+Look at the end of the `gh api` line, too. `|| true` means "ignore it if this fails", and the error text is filtered and thrown away. Any error from GitHub that would have explained what was going on got silently discarded, every morning, for months.
 
-## "The next morning at 08:00"
+The `https_url` on the last line is the bit that mattered. It built an address like `https://<token>@github.com/<user>/<name>.git`, with the token in the middle.
 
-Three folders, three mornings, one behaviour:
+## New folders got processed the very next morning
+
+The same thing happened to three folders, on three different mornings:
 
 ```
-folder        appeared      first run
+folder        created       processed
 api-nexus     06-22 16:18   06-23 08:00
 mongo-pi      07-15 15:10   07-16 08:00
 bloging-app   09-02 00:49   09-02 08:00
 ```
 
-Gaps of roughly sixteen hours, seventeen hours, and seven hours. You
-create a directory in the afternoon; by breakfast it has a git history,
-a branch, and an attempted home on the internet.
+I'd make a folder in the afternoon or late at night. By the next morning it had git history, a new branch, and an attempt to put it on GitHub.
 
-The near-miss is the one that made me stop. `pi-infra` — a folder of
-sanitised Caddy, cloudflared and systemd configuration — was born at
-**08:13:31** on 2026-09-02, fourteen minutes *after* that morning's run
-had finished. It went onto a skip list at 08:20:01, six minutes later,
-and I deleted the create path three minutes after that.
+One near miss scared me. On 2026-09-02 I created a folder called `pi-infra` at **08:13:31**, fourteen minutes after that morning's run had finished. It holds configuration for the services on this Pi. It went onto a "don't touch" list at 08:20:01, and I removed the repo-creation code from the script a few minutes after that.
 
-Without either change, the next morning's run would have met a folder
-full of infrastructure config with no `origin` and done the obvious
-thing with it. The note I wrote at the time says exactly that.
+Without those changes, the next morning's run would have found a folder full of infrastructure config and tried to put it on GitHub. I only caught it because I happened to be reading the script that morning for another reason.
 
-Six minutes. And only because I happened to be reading the sync script
-that morning for unrelated reasons.
+## The moment the token got copied
 
-## The part that actually mattered
+For `bloging-app` (this blog's folder), three separate records agree on the exact second.
 
-It was never the repositories.
-
-For `bloging-app`, three independent artefacts agree to the second.
-The reflog:
+Git's own history of branch changes:
 
 ```
 b832a39 develop@{2026-09-02 08:00:01 +0530}:
   branch: Created from HEAD
 ```
 
-The file's modification time:
+The config file's last-modified time:
 
 ```
 2026-09-02 08:00:01.700300818
   .../bloging-app/.git/config
 ```
 
-And the day's log, which is the entire record of what happened to that
-folder:
+And the script's log for that day, which is everything it recorded about the folder:
 
 ```
 [08:00:01] --- bloging-app ---
@@ -175,186 +137,123 @@ folder:
 [08:00:02] bloging-app: ERROR — push failed
 ```
 
-Read those three lines again and notice what is missing. There is no
-mention of a remote being added. The script built a URL of the form
-`https://<token>@github.com/<user>/<name>.git` and wrote it into
-`.git/config`, and said nothing, because that code path contains no
-`log` call at all.
+Notice what's missing. Nothing says a GitHub address was added, let alone one with a token in it. That part of the script had no log line at all. The only reason I can date it is the file's timestamp.
 
-The only reason the event can be dated is the file's mtime.
+The push failed because the GitHub repo didn't exist. So nothing was uploaded. But the token had already been written into the config file.
 
-## It had already been fixed once
+## I'd already cleaned this up once
 
-This is the sentence the post exists for.
+This is why I wrote the post.
 
-On **2026-06-29**, the same token was found embedded in the
-`.git/config` of seven other repositories on this box. All seven were
-switched to SSH remotes that day. The cleanup held — they are all still
-SSH.
+On **2026-06-29**, I found this same token inside the `.git/config` files of seven other projects on the Pi. I switched all seven to SSH, a way of connecting to GitHub that uses a key file instead of a token in the address. That cleanup held: all seven still use SSH today.
 
-The follow-up I wrote down at the time was that the exposed token
-should be revoked and rotated.
+My note from that day also said the token should be revoked and replaced.
 
-Sixty-five days later, the automation put the same credential back, in
-a new file, on a folder that had not existed in June.
+Sixty-five days later, the script put the same token back, into a folder that didn't even exist in June.
 
-I did not change the script in between. I fixed the *state* and left
-the *generator* running, and the generator does not care what I cleaned
-up last time. That is the whole lesson, and it generalises well past
-this script: **a cleanup is a state change; an unattended job is a
-state machine that runs every day.** If the two disagree, the one with
-a cron entry wins.
+I never changed the script in between. I cleaned up the **mess** and left the **thing that made the mess** running, and it didn't care what I'd cleaned up. That's the lesson, and it applies far beyond this one script:
 
-As of 2026-09-06 I have now done the same cleanup a second time. A scan
-of every `.git/config` under `~/Projects` finds no token-bearing remote
-in any of them. The exposure was 2026-09-02 to 2026-09-05 for one repo
-and 2026-07-16 to 2026-09-05 for the other, on a single-user machine
-where nothing served those paths to the network — real, contained, and
-not the kind of thing I want to find twice.
+**A cleanup fixes things once. A scheduled job runs every day. If they disagree, the scheduled job wins.**
 
-On rotation: `~/.github_token`'s mtime is still 2026-06-20 11:42:59 and
-has not moved. That is what "never rotated" looks like from this side.
-I cannot prove a negative from a file timestamp, but I also cannot
-think of a rotation that leaves one.
+## Why I didn't notice
 
-## Why none of this was visible
+Four reasons, and all four apply to other scheduled jobs:
 
-Four reasons, and all four transfer to other unattended jobs:
+- **The dangerous code rarely ran.** The part that added a GitHub address ran on three folders in the first 83 runs. The other runs did boring, correct things.
+- **The dangerous code was the silent code.** Almost everything else the script did went into the log. This part didn't.
+- **The error I could see pointed somewhere else.** Every morning the log said `ERROR — push failed`, which looks like a network or permissions problem. It was red, it was obvious, and it sent me looking in the wrong place for weeks. The token being copied produced no line at all.
+- **The safety check I did have worked perfectly.** Before its first commit, the script adds `.env`, `*.key`, `*.pem` and similar files to `.gitignore`, so secrets don't get committed. It worked: `mongo-pi/.env`, which holds database passwords, never made it into a commit. I'd thought hard about secrets **leaving** a project. The secret that moved that morning came **into** one. And when a safety check visibly works, you stop looking.
 
-**The dangerous branch was the rare branch.** The path that adds a
-remote ran on three folders, ever, across 83 runs. The other 80 runs
-did the boring thing correctly.
+## Two ideas that changed how I write these jobs
 
-**The dangerous branch was the quiet branch.** Every other action in
-the script logs. This one does not.
+**Doing everything isn't the same as doing anything.** There are three ways a job can decide what to work on:
 
-**The visible symptom was in a different category from the cause.**
-What showed up daily was `ERROR — push failed`, which reads as a
-network or permissions problem. It is red, it is unmissable, and it
-sent me looking at the wrong layer for weeks. The actual event — a
-credential being relocated — produced no line at all.
+- **An allow list:** only what's listed. You have to remember to add each new project.
+- **A block list:** everything except what's listed. You have to predict which future projects to exclude.
+- **Everything:** a block list with nothing on it, which is what I had.
 
-**The guard that existed worked perfectly.** `ensure_gitignore()`
-appends `.env`, `*.env`, `secrets.*`, `*.key`, `*.pem` and friends
-before the first `git add -A`, and it did its job: `mongo-pi/.env`,
-which holds database credentials, is not in that commit. I had thought
-carefully about secrets leaving.
+The catch is that this job's whole purpose is to back up things I forgot to set up. An allow list would defeat that. The answer is to split "look at everything" from "do something permanent to everything". The job can still find every folder and make a local backup commit, which is harmless. It just can't create things on GitHub or push to them on its own.
 
-The secret that moved that morning was one coming *in*. A guard that
-works is exactly the condition under which people stop looking.
+**"Create it if it's missing" is riskier than it sounds.** `mkdir -p` creates a folder if it's missing, and that's fine. Creating a GitHub repo if it's missing is different, for three reasons:
 
-## Whitelist, blacklist, glob
+- **It happens on someone else's system**, under your account, not on your own disk.
+- **The name comes from whatever folder happens to exist**, including something unpacked, copied or created by a tool.
+- **It's easy to do and hard to undo.** Creating takes one command. Undoing means working out whether anything already leaked.
 
-There are three ways an unattended job can decide what to act on, and
-the difference between them is not really about safety. It is about
-*when you have to be right*.
+Big companies hit the same shape. In 2024, Google Cloud [deleted a pension fund's entire private cloud](https://cloud.google.com/blog/products/infrastructure/details-of-google-cloud-gcve-incident) after a setting was left blank and a default kicked in. Google's write-up says no warning was sent, because the deletion wasn't triggered by a customer request. A job that acts on a default and doesn't tell anyone is the same problem, whichever way it points.
 
-- **A whitelist** asks you to be right at the moment you create a
-  project — when the whole context is in your head. Its failure mode is
-  omission: something silently does not get backed up, and you find out
-  when you need the backup.
-- **A blacklist** asks you to be right about projects that do not exist
-  yet, at a moment when you are thinking about something else entirely.
-  Its failure mode is commission.
-- **A bare glob** is a blacklist whose list is empty. Same failure
-  mode, and no place to write the exception even if you think of one.
+## The fix
 
-`pi-infra` is the proof. It needed to be defended fourteen minutes
-after it existed, and it was, with six minutes to spare, by luck.
+These are the changes I made to the script, and each one is live now:
 
-Now the honest counter-argument, because the post is worthless without
-it: **this job's entire purpose is to catch the thing I forgot to set
-up.** A whitelist defeats it completely. If I could be relied upon to
-add a project to an allow-list, I could be relied upon to `git init`
-it, and then I would not need the job.
+1. **It no longer creates GitHub repos, ever** (2026-09-02). Both places that called `gh api user/repos` are gone. A new folder gets a local git commit on the Pi and nothing else. A project with no GitHub connection is reported and skipped.
+2. **It reports what it chose not to do.** The daily summary it sends me now has lines like "committed locally, no GitHub repo" and "not in config, not pushed". Silence used to look the same whether a folder was skipped, missed or broken. Now every skipped folder is named.
+3. **It doesn't use the token at all anymore** (2026-09-05). It pushes each project through the GitHub connection that project already has. The code that built token addresses is gone, and the script no longer even reads the token file.
+4. **Pushing is now allow-list only** (2026-09-05). A project is pushed only if it's listed in a config file, its GitHub address matches the listed one, and it's on an allowed branch. Anything else is reported, not pushed.
+5. **The "don't touch" list fails safe** (2026-09-05). If that list file ever goes missing, the script skips every project and logs a warning. The old version did the opposite and treated every project as fair game.
+6. **The token is out of the config files** (2026-09-05). I switched both affected projects to SSH. A scan of every `.git/config` under my projects folder finds no token in any of them.
 
-The resolution is that "act on everything" and "act *irreversibly* on
-everything" are two different permissions, and they can be separated.
-The glob stays. What changed is the ceiling on what the job may do to a
-folder it has never seen: commit locally — reversible, local, free —
-and report. That is a better fix than an opt-out list, and it keeps the
-reason the job exists.
+**Proof it works.** This morning, 2026-09-14, the script found a brand-new folder I'd created the day before. Here's what it did (folder name and commit message trimmed):
 
-## Why "create if missing" is not `mkdir -p`
-
-`mkdir -p` is fine. `CREATE TABLE IF NOT EXISTS` is fine. So what makes
-`gh api user/repos` on a missing remote different?
-
-**The resource is outside the blast radius you can see.** A directory
-lives on the disk you are already writing to. A repository lives on
-someone else's system, under an account with a quota, a billing
-relationship and a public surface. "If missing, create" quietly
-promotes a local decision into a remote one.
-
-**The name is accident-controlled.** It is `basename "$dir"`. Anything
-that can put a directory into `~/Projects` — an unpack, a clone of
-someone else's project, a stray `cp -r`, an agent — picks a name in a
-namespace I own.
-
-**The inverse is not symmetric.** Creating is one API call. Un-creating
-is a decision, a confirmation dialog, and a judgement about whether
-anything already pushed ever leaked.
-
-The Google Cloud incident that deleted a pension fund's account in 2024
-is the same shape, inverted: a parameter left blank, a system-assigned
-default, an action nobody chose — and, the detail that matters most
-here, no notification, because the system did not classify it as a
-customer decision. An unattended job that acts on a default and does
-not report is the failure mode in both directions.
-
-## The report line, and why it is not politeness
-
-The fix I like least writing about, because it sounds obvious, is a
-report of what the job *chose not to do*.
-
-The argument for it is stronger than "it would be nice to know". An
-unattended job's report is the only place its policy is observable. If
-it only reports what it did, then "nothing happened to folder X" is
-indistinguishable between four different worlds: X was skipped by
-policy, X was never seen because of a glob edge case, X was seen and
-the action failed silently, or X does not exist any more.
-
-All four look the same. All four look like silence.
-
-A line of the form *"would have created `X` — skipped, no opt-in"* does
-three things a log of actions cannot. It makes the policy falsifiable
-daily: if it names a folder you did not expect, the glob is wrong; if
-it stops naming one, something changed. It converts an omission into an
-event with a timestamp, which is the only kind of thing you can alert
-on. And it is a dry run that never expires — `terraform plan`, `rsync
---dry-run`, `git clean -n` are all the same idea, run once by a human
-before an action; a standing report line is that idea run every day by
-the machine, for the actions it deliberately did not take.
-
-## What is still not fixed
-
-I would rather end here than on a victory lap.
-
-**The report line has never fired.** It is implemented and it has not
-yet had an occasion to print anything, which means it is untested.
-
-**The skip list fails open.** The guard is otherwise well built — the
-match is `grep -qxF`, exact and literal, so `mongo` does not match
-`mongo-pi` — and it runs before anything writes. But it begins:
-
-```bash
-[ -f "$SKIP_FILE" ] || return 1
+```
+[08:01:37] <new-folder>: not a git repo
+           — initializing
+[08:01:46] <new-folder>: initial commit
+           (local only) — ...
+[08:01:46] <new-folder>: no remote
+           — not created, not pushed
 ```
 
-Delete or rename that file and every project silently becomes eligible
-again. A guard file should fail closed, or at the very least shout.
+It made a local backup and reported the folder. It didn't create a repo, add an address, or copy a token.
 
-**And the token's mtime still says it was never rotated.**
+## The last step: kill the token
 
-The script no longer has a create path. But it is still the same
-script, on the same schedule, working from the same glob, and I am
-still the person who will put a directory in `~/Projects` one evening
-without thinking about what happens to it at eight the next morning.
+Cleaning the token out of files doesn't make it safe. A copy anyone could have read is still a working password until GitHub stops accepting it. So on 2026-09-14 I deleted it on GitHub.
+
+Before deleting it, I made sure nothing still needed it. The sync script had stopped reading the token on 2026-09-05, GitHub's command-line tool wasn't logged in with it, and no other script or service on the Pi used it. Deleting it couldn't break anything.
+
+Then I tested whether it was really dead, by sending GitHub a request with the old token. That test caught a mistake straight away:
+
+```
+18:47  GET /user  →  200  (still accepted)
+18:50  GET /user  →  401  (refused)
+```
+
+My first attempt deleted the **wrong token**. GitHub still accepted the old one. Deleting a token takes effect immediately, so a 200 meant this one was still alive. It was a fine-grained token with no expiry date, and I found and deleted it on the second try. Three minutes later, GitHub refused it.
+
+If I had trusted "I clicked delete", this post would have announced a dead token that still worked.
+
+### I also locked the Pi out of GitHub
+
+While cleaning up, I accidentally deleted the Pi's **SSH key** on GitHub too. After the fix, SSH is the only way the sync script pushes, so the next 08:00 run would have failed to push anything. The Pi could no longer log in:
+
+```
+$ ssh -T git@github.com
+git@github.com: Permission denied (publickey).
+```
+
+The private key was still safe on the Pi, so all I had to do was add its public half back on GitHub. Then I tested again:
+
+```
+$ ssh -T git@github.com
+Hi gauravrathore701! You've successfully
+authenticated, but GitHub does not provide
+shell access.
+```
+
+To check that git itself worked, not just the login, I listed the blog's branches on GitHub from the Pi, and got `main` back.
+
+That's the same lesson as the rest of this post, pointed the other way. A cleanup is a change like any other, and it can break things quietly. Test after you clean up, not just after you build.
+
+## Where it stands now
+
+- **The token is dead.** GitHub refuses it, so any copy, wherever it ended up, is useless.
+- **The script can't bring it back.** It no longer reads a token, creates repos, or writes GitHub addresses into config files.
+- **Pushes go over SSH**, and I tested that connection after the cleanup, not just before.
+- **New folders get a local backup commit and a line in the daily report.** Nothing goes to GitHub without me.
+
+The exposure was real but contained. The token sat in a file anyone on the Pi could read: in `mongo-pi` from 2026-07-16 to 2026-09-05, and in `bloging-app` from 2026-09-02 to 2026-09-05. This is a single-user machine, and nothing served those folders to the internet.
 
 ---
 
-*Verified on this box: Raspberry Pi 5, Debian 13, `gh 2.95.0`. Log
-files, reflog entries, file modes and creation timestamps were read
-2026-09-05 and re-checked 2026-09-06. Repository names are limited to
-the four the argument needs; account-wide counts are deliberately
-omitted. No token, or any part of one, appears in this post.*
+*Checked on this Pi: Raspberry Pi 5, Debian 13, `gh 2.95.0`. Logs, git history, file permissions and creation times were read 2026-09-05 and 2026-09-06. The fix and this morning's log were checked 2026-09-14, and so were the token deletion (18:47–18:50) and the SSH key being restored (18:51). Only the folders the story needs are named. No token, or any part of one, appears in this post.*

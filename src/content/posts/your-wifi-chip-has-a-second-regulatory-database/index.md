@@ -1,24 +1,53 @@
 ---
-title: "Your Wi-Fi chip has a second regulatory database, and it wins"
-description: "A Raspberry Pi could not see a 5 GHz access point three metres away. iw phy said the channel was enabled. It was telling the truth, and it was completely irrelevant."
+title: "My Raspberry Pi couldn't see my Wi-Fi until I told it I live in America"
+description: "My Pi ignored a strong 5 GHz network on channel 161. Linux said the channel was allowed. The Wi-Fi chip had its own opinion. Switching the country code to US fixed it, and here's why."
 date: 2026-09-06
 category: tech
 tags: ["wifi", "raspberry-pi", "linux", "brcmfmac", "networking"]
 draft: true
 ---
 
-The access point was three metres away, reporting -45 dBm to every
-other device in the house. The Pi scanned three times and found
-nothing.
+On 2026-07-26, my Raspberry Pi refused to see my 5 GHz Wi-Fi network. The signal wasn't weak: about -45 dBm, which in Wi-Fi terms is practically shouting. The router was on channel 161. The Pi's country was set to India (`IN`), which is where I live, and it scanned three times and found nothing.
 
-`iw phy phy0 info` insisted the channel was enabled. It was telling the
-truth. It was also completely irrelevant, because on this radio the
-kernel does not do the scanning.
+Then I told the Pi it was in the United States. It found the network on all three scans.
 
-## The false trail
+This post covers why that worked, the command that makes it look like it shouldn't matter, and what I still can't prove. Short version: on this Pi, Linux doesn't do the Wi-Fi scanning. The Wi-Fi chip does, and the chip has its own rulebook.
 
-Here is the output that stops most people, taken on this Pi with the
-regulatory domain set to `US`:
+## The problem
+
+Every Wi-Fi device follows a set of rules for its country, called a **regulatory domain**. The rules decide which channels it may use and how loudly it may transmit. Different countries allow different channels, so a device set to India and one set to the US may not be allowed to use the same frequencies.
+
+Channel 161 sits in a group called UNII-3: channels 149, 153, 157, 161 and 165, around 5.8 GHz. My router lived there. With the country set to `IN`, the Pi acted as if that whole group didn't exist:
+
+```
+country  scans that found the network
+IN       0 of 3
+US       3 of 3
+```
+
+Three scans each, about four seconds apart, because a single Wi-Fi scan is about as reliable as a weather forecast.
+
+Is UNII-3 even allowed in India? As far as Linux is concerned, yes. The kernel's regulatory database (`wireless-regdb`, the file behind these country rules) has this for India:
+
+```
+country IN:
+  (2402 - 2482 @ 40), (30)
+  (5150 - 5250 @ 80), (30)
+  (5250 - 5350 @ 80), (24), DFS
+  (5470 - 5725 @ 160), (24), DFS
+  (5725 - 5875 @ 80), (30)
+  ...
+```
+
+Channels 149 to 165 run from 5745 to 5825 MHz. That's inside the `5725 - 5875` line. So by the kernel's own rules, the Pi was allowed to use my router's channel in India, and it still couldn't see it.
+
+(That entry comes from the current upstream database. This Pi has `wireless-regdb` 2026.02.04 installed, but I can't decode the binary file locally, so I haven't confirmed it's byte-for-byte the same.)
+
+## What we checked
+
+### Step 1: ask Linux which channels are allowed
+
+This is the command everyone runs first, and it's the one that sends you the wrong way:
 
 ```
 $ iw phy phy0 info | grep -E "57[0-9]{2}|58[0-9]{2}"
@@ -29,16 +58,13 @@ $ iw phy phy0 info | grep -E "57[0-9]{2}|58[0-9]{2}"
   * 5825.0 MHz [165] (20.0 dBm)
 ```
 
-No `disabled`, no `no IR`, no radar annotation. Channels 149 through
-165 — the UNII-3 block — are present and permitted at 20 dBm.
+All five channels are listed, with no `disabled` and no warnings. That output is from the Pi as it's set up today, on `US`. India's kernel rules include those channels too, so under `IN` this list should look just as healthy.
 
-If you run that command, see your channel listed, and conclude the
-problem must be at the access point, you have made an entirely
-reasonable inference from the wrong source of truth.
+So you see your channel listed, decide the Pi is fine, and go blame the router. That's a completely reasonable conclusion, and it's wrong. My notes from that day say it plainly: a channel showing as enabled here does **not** mean this Wi-Fi chip will actually scan it.
 
-## Two tables, and they do not agree
+### Step 2: notice there are two rulebooks
 
-This is the command that reframes the problem:
+This command is where it clicked:
 
 ```
 $ iw reg get
@@ -61,42 +87,30 @@ country 99: DFS-UNSET
   (5460 - 5860 @ 160), (6, 20), (N/A)
 ```
 
-Two blocks. `global` is the kernel's cfg80211 view, built from
-`regulatory.db` — the one `apt` updates, the one every tutorial talks
-about. `phy#0` is what the **device itself** reports, and it is a
-different object entirely.
+There are two blocks, and they're not the same thing:
 
-Look at how different. The kernel's table has sharp band edges, real
-per-band power limits, and DFS correctly marked on the ranges that
-require it. The device's table has round numbers, a flat 20 dBm
-everywhere, no DFS marking at all, and a 2474-2494 MHz entry — that is
-channel 14, which is Japan-only and has been for its entire existence.
+- **`global`** is the Linux kernel's view, built from `wireless-regdb`. This is the one `apt` updates and every tutorial talks about. It has precise band edges, proper power limits, and radar-detection (DFS) marked where it's needed.
+- **`phy#0`** is what the **Wi-Fi device itself** reports. It's a much rougher table: round numbers, a flat 20 dBm everywhere, no DFS markings at all, and a line for 2474–2494 MHz. That's channel 14, which pretty much only Japan has ever allowed.
 
-That is not a `regulatory.db` entry. That is a firmware blob's idea of
-the world.
+That second block didn't come from the Linux database. It's the chip's own idea of the world. Which raises a fair question: why does a Wi-Fi chip have its own opinion about the law?
 
-The obvious question, and the one worth sitting with: **why does a
-radio have its own opinion about regulation at all?**
-
-## FullMAC: the firmware does the scanning
+### Step 3: find out who actually does the scanning
 
 ```
 $ ls -l /sys/class/net/wlan0/device/driver
 ... -> .../bus/sdio/drivers/brcmfmac
 ```
 
-`brcmfmac` drives Broadcom/Cypress parts, and these are **FullMAC**
-devices. The MAC layer — association, and crucially *scanning* — runs on
-the chip's own processor, not in the Linux kernel. The host driver
-mostly passes requests down and results up.
+The driver is `brcmfmac`, for Broadcom/Cypress Wi-Fi chips, and those chips are **FullMAC**. That one word explains the whole post.
 
-That single architectural fact is the whole post. On a SoftMAC card, the
-kernel builds the scan and the kernel's regulatory view governs it. On a
-FullMAC card, you ask the firmware to scan and the firmware decides what
-it is willing to look at, using a regulatory table compiled into the
-blob.
+Wi-Fi chips come in two broad flavours:
 
-Here is the blob on this board:
+- **SoftMAC:** Linux does the thinking, including building the scan, and the kernel's country rules decide which channels get scanned.
+- **FullMAC:** the chip has its own little processor running its own software (firmware). Linux politely asks it to scan, and the firmware decides what it's willing to look at, using a country table built into the firmware.
+
+So on this Pi, Linux is more of a receptionist than a manager. It passes the request along and reports back whatever the chip says.
+
+Here's the firmware on this board:
 
 ```
 brcmfmac: using brcm/brcmfmac43455-sdio
@@ -106,35 +120,25 @@ brcmfmac: Firmware: BCM4345/6 wl0:
           version 7.45.265 (28bca26 CY)
 ```
 
-Firmware built **29 August 2023**. Its internal country tables are that
-old, and `apt upgrade` of `wireless-regdb` does not touch them — those
-are two entirely separate update paths, and only one of them is the one
-you have been maintaining.
+It was built on **29 August 2023**. Whatever country tables are inside it are that old, and updating `wireless-regdb` with `apt` doesn't touch them. Those are two separate update paths, and only one of them was being updated.
 
-There is a related diagnostic in the same boot, worth noting because it
-shows the firmware failing to load one of its own data tables:
+## What fixed it
 
-```
-brcmfmac: brcmf_c_process_txcap_blob:
-  no txcap_blob available (err=-2)
-```
+I set the regulatory domain to `US`. On this Pi, it's set in **two** places.
 
-## What is actually pinned on this box
-
-The Pi is currently running with the regulatory domain forced to `US`,
-in two places. In `/boot/firmware/cmdline.txt`:
+The kernel command line, `/boot/firmware/cmdline.txt`:
 
 ```
 ... rootwait cfg80211.ieee80211_regdom=US
 ```
 
-and in `/etc/modprobe.d/cfg80211.conf`:
+And `/etc/modprobe.d/cfg80211.conf`:
 
 ```
 options cfg80211 ieee80211_regdom=US
 ```
 
-Live, in the running kernel:
+Then I checked that the running kernel actually picked it up:
 
 ```
 $ cat /sys/module/cfg80211/parameters/\
@@ -142,109 +146,67 @@ ieee80211_regdom
 US
 ```
 
-With that in place the UNII-3 channels are available and the access
-point is visible. The problem is solved on this machine, and has been
-for a while.
+The network showed up on 3 scans out of 3, and the Pi has stayed on `US` ever since. As I write this, on 2026-09-14, the Pi is connected on channel 161:
 
-## The part I have not proved
+```
+$ iw dev wlan0 link
+  freq: 5805.0
+  signal: -54 dBm
+```
 
-I want to separate what I have measured from what I believe, because
-the gap matters and most write-ups of this problem do not mark it.
+5805 MHz is channel 161, one of the channels it couldn't see under `IN`. Going by July's scans, switching back to `IN` would knock this Pi off the network.
 
-**What is measured:** the two tables above disagree. The device's table
-is coarse, stale-looking, and clearly not sourced from `regulatory.db`.
-The firmware dates from 2023. With the domain pinned to `US`, UNII-3
-works.
+**The trade-off.** The US rules don't allow 2.4 GHz channels 12, 13 and 14, so those are now switched off:
 
-**What I believe but have not demonstrated:** that setting the domain to
-`IN` produces a firmware channel table that omits 149-165, and that this
-is why the scans came back empty.
+```
+* 2467.0 MHz [12] (disabled)
+* 2472.0 MHz [13] (disabled)
+* 2484.0 MHz [14] (disabled)
+```
 
-The evidence I have for that is a scan result — zero hits across three
-attempts — recorded on this box in July 2026. A scan returning nothing
-and a channel table omitting an entry are *different things*, and I have
-conflated them before. The experiment that would settle it is specific:
-set the domain to `IN`, dump `iw phy phy0 info`, and show 5745-5825
-absent *while* the kernel's own `IN` entry in `regulatory.db` contains
-5725-5875. Kernel says allowed, radio says no, therefore firmware.
+The Pi connects over 5 GHz, so I haven't missed them. If your network lives on channel 12 or 13, this fix would swap one missing network for another.
 
-I have not run it. This Pi is in another room and its only uplink is
-that Wi-Fi adapter, so the failure mode of getting it wrong is losing
-the machine. Doing it properly means arming a scheduled revert *before*
-making the change, not after.
+### Tips if you try this
 
-The genuinely new result would be dumping the firmware's CLM blob
-country table directly and showing which channels `IN` contains. I do
-not currently know a method for that on this part, and I could not find
-one published.
+- **Set it in both places.** The kernel command line and `/etc/modprobe.d/`. One without the other can work on some boots and not others.
+- **Don't trust `raspi-config`'s exit code.** On this headless Pi (no screen attached), `raspi-config nonint do_wifi_country <CC>` failed with `Cant connect to display: (null)`, but it had **already written** the change to `cmdline.txt` before failing. Check the file and `/sys/module/cfg80211/parameters/ieee80211_regdom` rather than trusting the error.
+- **Don't cut the branch you're sitting on.** This Pi's only network connection is Wi-Fi. Before changing the country remotely, make sure the network you're connected to right now is on a channel the new country allows. Better still, schedule an automatic undo before making the change, so a mistake costs you five minutes instead of a walk to the Pi with a keyboard.
 
-So: treat the causal story here as the leading hypothesis with strong
-circumstantial support, not as a demonstrated fact. The diagnostic
-lesson — that `iw reg get` shows you two tables and only one of them is
-doing the scanning — stands on its own regardless.
+## What I haven't proved
 
-Two more things I have not verified and am therefore not asserting.
-Whether newer `firmware-brcm80211` packages ship a different CLM with a
-corrected table. And whether the Pi 5's radio is genuinely the same part
-as older boards — `dmesg` here says `BCM4345/6` with
-`brcmfmac43455-sdio`, which is the Pi 4 / Pi 400 chip, so do not
-generalise "the Pi" from this one board without checking your own.
+I want to keep what I measured separate from what I believe, because most write-ups on this skip that step.
 
-## If you are going to change it
+**What I measured:**
+- The two rulebooks disagree.
+- The chip's table clearly doesn't come from the Linux database.
+- The firmware is from 2023.
+- Under `IN` the network was invisible (0 of 3 scans), and under `US` it was visible (3 of 3).
+- The Pi is on channel 161 today.
 
-The regulatory situation in India is that the 5725-5875 MHz band is
-delicensed for low-power indoor use, and the kernel's own `IN` entry in
-`regulatory.db` reflects that — it includes 5725-5875. What appears to
-be stale is a vendor blob from 2023, not the law.
+**What I believe but haven't shown:** that the firmware's country table for `IN` leaves out channels 149–165, and that's why the scans came back empty.
 
-I am describing what the regulatory database and the delicensing
-notifications say. I am not telling you it is lawful to set a foreign
-country code on your hardware, and you should read the primary
-notification for your own jurisdiction rather than trusting a blog post
-— including this one. I have not read the primary gazette document
-myself, which is exactly why I am not going to make a claim about what
-your regulator permits.
+That's the most likely explanation, but a scan that finds nothing and a table that's missing a channel are different things. The test that would settle it: set the country to `IN`, list the channels the chip reports, and show 5745–5825 missing even though the kernel's own `IN` rules include them. Kernel says yes, chip says no, therefore it's the firmware.
 
-The mechanical notes, if you proceed:
+I haven't run it. This Pi's only connection is the Wi-Fi I'd be breaking, so getting it wrong means losing the machine. The really conclusive result would be reading the country table straight out of the firmware file, and I don't know how to do that on this chip. I couldn't find anyone who has published a way.
 
-**Set it in both places.** The kernel command line and
-`/etc/modprobe.d/`. One without the other survives some boots and not
-others.
+Two more things I'm not claiming:
+- **Newer firmware:** I don't know whether newer `firmware-brcm80211` packages fix the table.
+- **Other Pis:** I don't know whether every Pi behaves the same. This Pi 5 reports chip `BCM4345/6` with `brcmfmac43455-sdio` firmware. Check yours before assuming it matches.
 
-**Know what you give up.** Pinning `US` gains you 149-165, and as it
-happens 100-144 as well. It costs you 2.4 GHz channels 12 and 13, which
-`US` does not permit.
+## Is this legal?
 
-**Arm the revert first.** On a headless, Wi-Fi-only box, schedule the
-restore before you apply the change, so a mistake costs you five minutes
-rather than a trip with a keyboard.
+I'm not a lawyer, and this isn't legal advice.
 
-**Watch out for `raspi-config nonint do_wifi_country`.** It fails
-loudly in some situations and succeeds silently in others, which is the
-worst combination for something you are using to verify state. Check
-`/sys/module/cfg80211/parameters/ieee80211_regdom` afterwards rather
-than trusting the tool's exit code.
+Here's what I can point to. Linux's own rules for India include 5725–5875 MHz. News coverage and policy write-ups say India has delicensed parts of the 5 GHz band, including that range, for low-power indoor use. So the thing blocking channel 161 seems to be a firmware table from 2023, not Indian law.
 
-## The loose thread
+But I haven't read the government's official notification myself. So check the rules for your own country from the source, not from a blog post, and that includes this one.
 
-I have not been able to explain `country 98` and `country 99`.
+## One mystery left
 
-Those are not ISO-3166 alpha-2 codes. The `global` block's ranges look
-broadly like a US table and the module parameter reads `US`, so
-something is mapping oddly somewhere between the parameter, cfg80211 and
-the driver's self-report. I do not know what, and I would rather leave
-that written down as an open question than invent a tidy explanation for
-it.
+I can't explain `country 98` and `country 99` in that `iw reg get` output. Those aren't real country codes. The kernel setting says `US`, and the `global` table looks roughly like US rules, so something is mapping codes strangely between the setting, the kernel and the driver. I don't know what. I'd rather leave it as an open question than make up a neat answer.
 
-If you know, I would like to.
+If you know, please tell me. My Pi would like to know where it lives too.
 
 ---
 
-*Observed on this box 2026-09-02: Raspberry Pi 5, Debian 13,
-`brcmfmac43455-sdio`, chip `BCM4345/6`, firmware version 7.45.265
-(28bca26 CY) dated 2023-08-29. The regulatory domain is pinned to `US`
-here and the UNII-3 channels work. The claim that the firmware's `IN`
-table omits channels 149-165 is inferred from a scan result and has not
-been demonstrated by a channel-table dump; the experiment that would
-demonstrate it is described above and has not been run. 6 GHz is out of
-scope — this NIC reports `6GHZ: no`.*
+*Observed on this Pi: Raspberry Pi 5, Debian 13, `brcmfmac43455-sdio`, chip `BCM4345/6`, firmware 7.45.265 (28bca26 CY) dated 2023-08-29, `wireless-regdb` 2026.02.04. The scan results (0/3 under `IN`, 3/3 under `US`) are from 2026-07-26. The two-table output was captured 2026-09-02 and matched again 2026-09-14, when the Pi was connected on channel 161. The claim that the firmware's `IN` table leaves out channels 149–165 is inferred, not demonstrated. 6 GHz is out of scope, because this Wi-Fi chip doesn't support it.*
