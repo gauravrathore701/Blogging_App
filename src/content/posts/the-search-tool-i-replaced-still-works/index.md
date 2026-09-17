@@ -1,19 +1,16 @@
 ---
-title: "The search tool I replaced still works. I checked."
-description: "Pagefind aborts on a Raspberry Pi 5 — but only from 1.5.2. 1.5.0 indexes fine. So this was never 'the tool cannot run here'. It was a pin I declined, and here is the arithmetic."
+title: "Pagefind works on my Raspberry Pi 5 after all. I kept my replacement anyway — here's the maths"
+description: "Pagefind crashed on my Raspberry Pi 5, so I swapped in MiniSearch. Then I found an older Pagefind runs fine. Why I still didn't switch back, and when that decision expires."
 date: 2026-09-06
+updated: 2026-09-17
 category: tech
 tags: ["pagefind", "minisearch", "static-site", "astro", "raspberry-pi"]
 draft: true
 ---
 
-I picked Pagefind for this blog's search, watched it die three seconds
-into a build, and replaced it with MiniSearch. Then I wrote a post
-explaining that the Raspberry Pi's 16 KB memory pages made Pagefind
-unusable here.
+I wanted search on this blog, which runs on a Raspberry Pi 5. I picked Pagefind, and it crashed during the build with `<jemalloc>: Unsupported system page size` — the Pi 5's 16 KB memory pages versus an allocator that wasn't built for them. So I ripped it out, wrote a small MiniSearch setup instead, and started drafting a post saying Pagefind simply can't run on this hardware.
 
-Before publishing that, I finally ran the one command I had been
-putting off.
+Then, before publishing that, I finally ran the one command I'd been putting off:
 
 ```
 $ npx -y pagefind@1.4.0 --version
@@ -28,9 +25,11 @@ $ npx -y pagefind@1.5.2 --version
 memory allocation of 16 bytes failed
 ```
 
-Pagefind works on this machine. Two releases of it, anyway.
+Oh. Pagefind works on this Pi. Two releases of it, anyway.
 
-And 1.5.0 does not merely start. Pointed at a built site:
+## The tool I dumped was fine all along (sort of)
+
+And 1.5.0 doesn't just start. Pointed at the built site on 2026-09-06, it indexed it:
 
 ```
 $ npx -y pagefind@1.5.0 --site dist \
@@ -42,69 +41,39 @@ $ npx -y pagefind@1.5.0 --site dist \
 Finished in 0.445 seconds
 ```
 
-`getconf PAGESIZE` on this box is `16384`, unchanged. The hardware did
-not become compatible. The tool regressed between 1.5.0 and 1.5.2, and
-[issue #1147](https://github.com/Pagefind/pagefind/issues/1147) says so
-in exactly those terms — I had read it, believed it, and never
-confirmed it.
+`getconf PAGESIZE` on this Pi is still `16384`. The hardware didn't suddenly become compatible. Pagefind broke somewhere between 1.5.0 and 1.5.2 — there's no 1.5.1 on npm — and [issue #1147](https://github.com/Pagefind/pagefind/issues/1147) says exactly that. I'd read it, believed it, and never checked it myself.
 
-So if you arrived here from that error message: **you are probably not
-stuck.** Pin 1.5.0 and get on with your day. The rest of this is about
-why I did not.
+I re-checked on 2026-09-17: 1.5.2 is still the newest release, it still crashes, and 1.5.0 still starts. (The full story of the crash is in [its own post](/blog/posts/jemalloc-unsupported-system-page-size-pi5/).)
 
-## Why I did not pin
+So if you landed here from that error message: **you're probably not stuck.** Pin 1.5.0 and get on with your day. The rest of this post is about why I didn't.
 
-A working pin is not the same thing as a working dependency.
+## A pin that works is still a debt
 
-1.5.0 works precisely because it predates whatever landed in 1.5.1. The
-version that runs is, by construction, the version before the change I
-am waiting for someone to fix. That is a strange thing to build on. It
-means every future release needs re-testing against an allocator bug on
-an architecture the project does not appear to test on, and until then
-the answer to "should I upgrade?" is permanently "check first".
+A working pin isn't the same as a working dependency.
 
-Pinning is debt, and this particular pin has no repayment date attached
-to it.
+1.5.0 works *because* it's older than whatever broke. The version that runs is, by definition, the version from before the fix I'd be waiting for. That's an odd thing to build on. Every future release needs testing on this Pi before I can upgrade, and until someone fixes it upstream, the answer to "should I update?" is permanently "check first".
 
-I want to be fair to the other side, because for most people the other
-side is obviously right: if Pagefind is the search on your site and it
-works at 1.5.0, pin it and move on. You will get a fix eventually, the
-pin costs you nothing in the meantime, and you keep a genuinely
-excellent tool. I am not going to pretend that is the wrong call. It
-just was not mine, for a blog with two posts on it and no urgent need
-for a search box that scales to ten thousand pages.
+Pinning is borrowing, and this loan has no repayment date.
 
-## The other options, priced
+To be fair to the other side — and for most people the other side is obviously right: if Pagefind is the search on your site and 1.5.0 works, pin it. The pin costs you nothing today, a fix will probably come, and you keep a genuinely excellent tool. It just wasn't my call for a brand-new blog with two short posts on it, where a search box built for ten thousand pages was never the bottleneck.
 
-**Boot the 4 KB kernel.** Both kernels already ship on a Pi; it is one
-line in `config.txt` and a reboot. It also changes the memory model for
-every process on the machine to satisfy one build-time dependency, on a
-box that sits in another room and whose only uplink is Wi-Fi. The
-mechanism is [its own post](/blog/posts/jemalloc-unsupported-system-page-size-pi5/).
+## The other exits, with price tags
 
-**Build the index somewhere else.** Perfectly reasonable, and the right
-answer if you already have CI. It means the site can no longer be built
-end-to-end on the machine that serves it, which was a property I wanted
-to keep.
+**Boot the 4 KB kernel.** Both kernels already ship on a Pi; it's one line in `config.txt` and a reboot. It also changes memory behaviour for every process on the machine to keep one build tool happy — on a headless Pi whose only network link is Wi-Fi. Not a gamble I wanted for a search box.
+
+**Build the index on another machine.** Perfectly reasonable, and the right answer if you already have CI. But then the site can't be built start to finish on the machine that serves it, and I wanted to keep that.
 
 **Change the tool.** What I did.
 
-## What I built instead
+## What I built instead: one JSON file and a search box
 
-MiniSearch 7.2.0 over a JSON index generated at build time. It is about
-twenty lines: walk the content collection, emit `{ id, title, tags,
-body }` per post into `search-index.json`, and have the search page
-fetch it and hand it to MiniSearch on first interaction.
+MiniSearch 7.2.0 reading a JSON index that's generated at build time. The endpoint is 23 lines: walk the blog's posts, and for each one emit its `id`, `title`, `description`, `category`, `tags`, `date` and a cleaned-up `body`. The search page fetches that JSON and hands it to MiniSearch.
 
-That is genuinely all of it, and it is not the interesting part of this
-post. The interesting part is what it costs.
+That really is all of it, and it's not the interesting part. The interesting part is what it costs as the blog grows.
 
-## The numbers
+## How big does the index get?
 
-The important distinction, and the reason this section exists: **one
-row below is measured. The rest are estimates**, extrapolated from a
-synthetic corpus assembled out of this repo's own prose at 1,500 words
-per post.
+When I made this decision, the blog had two stub posts — 104 and 31 words. Real posts here run far longer, so I built a synthetic corpus out of this repo's own prose at 1,500 words per post and measured that. **Only the first row below was a real measurement at the time; the rest are estimates** from that synthetic corpus.
 
 ```
 posts  raw JSON  gzip   +JS    on wire
@@ -114,112 +83,78 @@ posts  raw JSON  gzip   +JS    on wire
 100      914 K   320 K  6.0K   ~326K
 200      1.83M   639 K  6.0K   ~645K
 
-* measured, 104 words. Rest estimated.
+* measured: 1 published post, 104 words.
+  Rest estimated.
 ```
 
-Roughly 9.36 KB raw and 3.3 KB gzipped per 1,500-word post, and it
-scales linearly. A 3,000-word post roughly doubles its row; a 600-word
-one roughly quarters it.
+That works out to roughly 9.36 KB raw and 3.3 KB gzipped per 1,500-word post, growing in a straight line. A 3,000-word post roughly doubles its share; a 600-word one cuts it by more than half.
 
-### The trap this table exists to prevent
+### The multiplication that makes you feel good
 
-At the time I made this decision I had two real posts and an
-823-byte index. The natural move is to multiply.
+With two tiny posts, the tempting move is to multiply. Those two posts averaged about 594 bytes each in the index, and 594 bytes times 200 posts is 119 KB. That sounds completely fine — and it's wrong by more than an order of magnitude, because stub posts aren't real posts. The synthetic estimate for 200 real-length posts is about **1.83 MB raw**.
 
-Two hundred times 823 bytes is 119 KB, which sounds completely fine,
-and it is wrong by more than an order of magnitude. Those two posts
-were stubs. The real number at 200 posts is about **1.83 MB raw**.
+If you size a client-side search index from the posts you have today, and they're short because the blog is new, you'll get an answer that's wrong in exactly the direction that makes you feel good about it.
 
-If you are sizing a client-side search index from the posts you have
-today, and the posts you have today are short because the blog is new,
-you are going to get an answer that is wrong in the direction that
-makes you feel good about it.
+### Real posts, eleven days later
+
+The blog has grown since, so here's the live index on 2026-09-17 instead of a guess:
+
+```
+site  posts  raw JSON   gzip -n
+prod      9  99,231 B   37,315 B
+```
+
+(Published posts only, measured with `gzip -n` on 2026-09-17.)
+
+The nine published posts average about 1,880 words of body text and about **11 KB raw / 4.1 KB gzipped each** — a bit heavier per post than the synthetic estimate, because the real posts are longer than 1,500 words. The search script adds about 6 KB gzipped on top.
 
 ### Where it stops being reasonable
 
-- **Up to ~25 posts:** a non-issue. ~87 KB, once, on a page the reader
-  deliberately navigated to. One medium photo.
-- **~50 posts:** ~167 KB. Still defensible. This is where a careful
-  person starts thinking about it.
-- **~100 posts: the line.** ~326 KB on the wire, and roughly half a
-  megabyte of index built in phone memory before the first keystroke
-  does anything.
-- **~200 posts:** ~645 KB gzipped for a search box. Indefensible.
-  Something must have changed before here.
+These are judgement calls on the estimates above, not measurements:
 
-### The comparison that hurts
+- **Up to ~25 posts:** a non-issue. ~87 KB, once, on a page the reader chose to open. About one medium-sized photo.
+- **~50 posts:** ~167 KB. Still defensible. This is where a careful person starts paying attention.
+- **~100 posts: the line.** ~326 KB over the wire, and, by a rough proxy, about half a megabyte of index structure to build in the browser before the first keystroke does anything.
+- **~200 posts:** ~645 KB gzipped for a search box. Indefensible. Something should have changed well before this.
 
-Pagefind's own homepage claims a 10,000-page site searchable in under
-300 KB, because it chunks its index and fetches only the parts a query
-needs. Mine ships the whole thing.
+### The comparison that stings
 
-So at 100 posts, my design is transferring more bytes than Pagefind
-needs for a hundred times the content.
+Pagefind's own homepage says it "can run a full-text search on a 10,000 page site with a total network payload under 300kB, including the Pagefind library itself." It splits its index into chunks and only fetches the ones a search needs. Mine ships the whole thing.
 
-I am aware of how that reads next to the decision above. It is the
-correct comparison and leaving it out would make this a worse post.
+So by about 100 posts, my approach would be sending more bytes than Pagefind needs for a hundred times the content.
+
+I'm aware of how that reads next to the decision above. It's the fair comparison, and leaving it out would make this a worse post.
 
 ## The expiry date, written down
 
-Before any of this measurement, I had written a revisit trigger into
-the project notes: *when the index exceeds roughly 1 MB.*
+Before measuring any of this, I'd written a revisit trigger into the project notes: *revisit when the index exceeds roughly 1 MB.*
 
-At 9.36 KB raw per post, 1 MB is about **107 posts**. The independent
-analysis above put the line at about 100. Two methods, one answer,
-within a rounding error — which is a nicer result than I expected and
-suggests the original guess was better than it deserved to be.
+At the synthetic 9.36 KB per post, 1 MB is about **107 posts**, close to the line above. With the real posts averaging about 11 KB each, the 1 MB mark comes a little sooner, at roughly 90 posts, if future posts are as long as these.
 
-One caveat that must survive: 1 MB *raw* is about 350 KB
-*transferred*. Cloudflare compresses; the reader's phone decompresses.
-Quoting the raw number alone overstates the download and understates
-the memory.
+One caveat worth keeping: 1 MB *raw* is only about 350 KB *transferred*, because the server compresses and the reader's browser decompresses. Quoting the raw figure alone overstates the download and understates the memory.
 
-When it expires, in rough order of preference:
+When the trigger fires, in rough order of preference:
 
-1. **Drop `body` from the index** and search titles and tags only. The
-   body field is 55 KB raw at 200 posts on these measurements — it is
-   most of the weight.
-2. **Generate the index on a 4 KB-page machine** and commit the
-   artefact.
-3. **Pin Pagefind after all.** Which, as of today, I know is a live
-   option rather than a wish.
+1. **Drop `body` from the index** and search titles, descriptions and tags only. On the synthetic corpus that shrinks 200 posts from about 1.83 MB raw to about 55 KB. The catch: search stops matching article text, which hurts on a tech blog where people search for error messages.
+2. **Generate the index on a 4 KB-page machine** and commit the result.
+3. **Pin Pagefind after all.** Which I now know is a real option, not wishful thinking.
 
-## What I did not measure
+## What I didn't measure
 
-Being explicit, because the table above invites over-reading:
+Being explicit, because a table like that invites over-reading:
 
-- **No real-device timings.** The index-build times I have are Node on
-  the Pi. No browser, no phone, no throttled network. Nothing here
-  supports a claim about how fast this feels in someone's hand.
-- **No brotli.** `brotli` is not installed on this box. Cloudflare very
-  likely serves it and would beat the gzip column by something like
-  15-20%, but that is an industry figure, not a measurement of this
-  index. Every compressed number above is gzip.
-- **No heap measurement.** The "half a megabyte in phone memory" figure
-  is `toJSON()` byte length, which is a proxy for the structure, not a
-  measurement of what a browser actually allocates.
+- **No real-device timings.** The index-build times I have are Node on the Pi. No browser, no phone, no slow network. Nothing here says how fast search *feels* in someone's hand.
+- **No brotli.** `brotli` isn't installed on this Pi, so every compressed number above is gzip. I'd assumed Cloudflare would serve brotli, but when I asked it for brotli or gzip on 2026-09-17, it sent the index back as gzip.
+- **No real browser memory figure.** The "half a megabyte" is the byte length of MiniSearch's `toJSON()` output — a stand-in for the in-memory structure, not a measurement of what a browser actually allocates.
 
-One small thing I did learn while measuring, which cost me twenty
-confusing minutes: `gzip` stores the original filename in its header,
-so byte-identical content compresses to different sizes under different
-names. Use `gzip -n` when you are comparing.
+One small gotcha from measuring: plain `gzip -c file` stores the original file name in its header, so the same content compresses to slightly different sizes under different names. Use `gzip -n` when you're comparing.
 
 ## The short version
 
-The best tool for this job runs on my hardware if I pin it two releases
-back. I chose not to, because a pin that predates the fix you are
-waiting for is a debt with no due date — and because at this blog's
-size the difference is a few dozen kilobytes on a page nobody has
-visited yet.
+The best tool for this job runs on my Pi if I pin it one release back. I chose not to, because a pin that predates the fix you're waiting for is a debt with no due date, and because at this blog's size the difference is a few dozen kilobytes on one page.
 
-I also wrote down the post count at which that stops being true. It is
-about a hundred, and I got there twice by different routes.
+I also wrote down the post count where that stops being true. It's about a hundred, give or take how long I keep writing.
 
 ---
 
-*Verified on this box 2026-09-06: Raspberry Pi 5, `getconf PAGESIZE` =
-16384. The Pagefind version matrix and the 1.5.0 index run were
-executed the same day. MiniSearch 7.2.0. Every row of the size table
-below "1 post" is an estimate from a synthetic corpus and is labelled
-as such; check Pagefind's own published figures before relying on the
-comparison.*
+*Checked on this Pi: Raspberry Pi 5, `getconf PAGESIZE` = 16384. The Pagefind version test and the 1.5.0 indexing run are from 2026-09-06; the version checks were repeated on 2026-09-17. MiniSearch 7.2.0 (still the latest on npm, 2026-09-17). The size table beyond the first row is an estimate from a synthetic corpus and is labelled as such; the live-index figures and the Pagefind homepage quote were checked on 2026-09-17.*
