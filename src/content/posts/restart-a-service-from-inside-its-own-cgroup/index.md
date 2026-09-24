@@ -4,7 +4,7 @@ description: "Run systemctl restart from inside a systemd unit and the restart s
 date: 2026-09-06
 category: tech
 tags: ["systemd", "linux", "cgroups", "self-hosting", "raspberry-pi"]
-draft: true
+draft: false
 ---
 
 I run a Discord bot on my Raspberry Pi as a systemd service, and it can run shell commands for me. On 10 July it needed a restart to pick up a config fix.
@@ -155,14 +155,12 @@ The pattern that runs on this Pi day to day doesn't restart from inside. A separ
 
 ```ini
 [Unit]
-Description=Restart discord-claude if its
-  heartbeat is stale
+Description=Restart discord-claude if its heartbeat is stale
 After=discord-claude.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/gaurav/Projects/\
-discord-claude-bot/watchdog.sh
+ExecStart=/home/gaurav/Projects/discord-claude-bot/watchdog.sh
 ```
 
 And the last lines of that script, word for word:
