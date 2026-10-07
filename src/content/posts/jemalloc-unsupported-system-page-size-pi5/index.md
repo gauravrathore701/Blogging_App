@@ -4,17 +4,17 @@ description: "On a Raspberry Pi 5, Pagefind and a dozen unrelated tools abort wi
 date: 2026-09-03
 category: tech
 tags: ["raspberry-pi", "jemalloc", "aarch64", "debugging"]
-draft: true
+draft: false
 ---
 
-I wanted a search box on this blog, which runs on a Raspberry Pi 5. So I added Pagefind, a static search indexer, and ran the build. Pagefind didn't index anything. It didn't even get going. It died on the spot with two lines that had nothing to do with search:
+I wanted a search box on this blog, which runs on a Raspberry Pi 5. So I added Pagefind (it scans the finished pages after a build and turns them into a search index the reader's own browser can query, so there's no search server to run) and ran the build. Pagefind didn't index anything. It didn't even get going. It died on the spot with two lines that had nothing to do with search:
 
 ```
 <jemalloc>: Unsupported system page size
 memory allocation of 16 bytes failed
 ```
 
-Running it on its own with `npx pagefind --site dist` did exactly the same thing, so it wasn't Astro or my config. It was the Pagefind binary against this Pi. And the error wasn't really about Pagefind either — it's about a memory allocator called jemalloc, and it turns out a *lot* of unrelated software trips over the same line on a Pi 5.
+Running it on its own with `npx pagefind --site dist` did exactly the same thing, so it wasn't Astro (the site generator that turns my posts into the plain HTML files this blog serves) or my config. It was the Pagefind binary against this Pi. And the error wasn't really about Pagefind either — it's about a memory allocator called jemalloc, and it turns out a *lot* of unrelated software trips over the same line on a Pi 5.
 
 Two commands tell you whether you're in the same boat:
 

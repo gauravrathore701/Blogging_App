@@ -7,6 +7,8 @@ import { join } from 'node:path';
 
 const POSTS_DIR = new URL('../content/posts/', import.meta.url).pathname;
 const includeDrafts = process.env.BLOG_INCLUDE_DRAFTS === '1';
+// Dev renders only drafts unless BLOG_DRAFTS_ONLY=0. Mirrors ./posts.ts.
+const draftsOnly = includeDrafts && process.env.BLOG_DRAFTS_ONLY !== '0';
 
 function field(frontmatter, name) {
   const m = frontmatter.match(new RegExp(`^${name}:\\s*["']?([^"'\\n]+)["']?\\s*$`, 'm'));
@@ -26,7 +28,9 @@ function readPosts() {
     const fm = readFileSync(file, 'utf8').match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
     // Same default as the content schema: no `draft:` means draft.
     const draft = field(fm, 'draft') !== 'false';
-    if (draft && !includeDrafts) continue;
+    // Must match isVisible() in ./posts.ts, or the sitemap would list pages
+    // this build never rendered.
+    if (includeDrafts ? draftsOnly && !draft : draft) continue;
     const lastmod = toDay(field(fm, 'updated')) ?? toDay(field(fm, 'date'));
     if (lastmod) posts.push({ slug, category: field(fm, 'category'), lastmod });
   }

@@ -1,26 +1,41 @@
 ---
 title: "My Raspberry Pi bot can't restart itself without killing the messenger"
-description: "Run systemctl restart from inside a systemd unit and the restart should still go through, but the process that asked dies with the rest of the cgroup. Why, what doesn't help, and what does."
+description: "I asked a bot to restart itself. Linux shuts down a program and everything it launched together, so the bot died mid-sentence. Why that happens, in plain words, and three ways around it."
 date: 2026-09-06
+updated: 2026-10-06
 category: tech
 tags: ["systemd", "linux", "cgroups", "self-hosting", "raspberry-pi"]
 draft: false
 ---
 
-I run a Discord bot on my Raspberry Pi as a systemd service, and it can run shell commands for me. On 10 July it needed a restart to pick up a config fix.
+I run a Discord bot on my Raspberry Pi. It sits there all day, and when I message it, it can run commands on the Pi for me. On 10 July it needed a restart to pick up a config fix.
 
-The obvious move was to have it run `systemctl restart discord-claude` itself. The problem: that shell lives *inside* the very service it would be restarting, so the command would kill the shell that typed it — along with the reply the bot was halfway through sending me. From the chat it would look like the restart silently failed. It almost certainly wouldn't have failed; the *messenger* would have been shot.
+The obvious move was to ask the bot to restart itself. The problem is that the bot would be issuing the shutdown order from *inside* the thing being shut down. The order goes out, the bot gets taken down with everything else, and the half-written reply it owed me never arrives. From my phone it looks like the restart silently failed. It almost certainly didn't fail — the messenger just got shot.
+
+## The short version, if you're not a Linux person
+
+Linux has a manager that starts background programs when the machine boots and keeps them alive. On most modern systems that manager is called **systemd**, and each program it looks after is a **service**.
+
+When systemd starts a service, it drops that program into a labelled box. Anything the program launches afterwards — a helper, a script, a command — lands in the same box automatically. The box exists so systemd can clean up properly: when you say "restart this service", it empties the whole box and starts fresh. No stragglers left behind.
+
+That's a good design, and it's exactly the problem. My bot was in the box. The shell running my command was in the box. So "empty the box" included the thing asking for the box to be emptied.
+
+The box has a real name — a **cgroup**, short for control group — and the rest of this post is about seeing it, confirming it's the cause, and getting the order issued from outside it.
 
 ## You're standing inside the thing you're restarting
 
-The bot runs as a systemd unit. It starts a CLI, which starts a shell, which is where commands run. Here's that shell asking which cgroup (systemd's process group) it belongs to, captured on 2026-09-04:
+The bot runs as a systemd service. It starts a command-line tool, which starts a shell, and the shell is where my commands actually run. Three programs, one after the other.
+
+Every program on Linux can ask which box it's in. Here's that shell asking, captured on 2026-09-04:
 
 ```
 $ cat /proc/self/cgroup
 0::/system.slice/discord-claude.service
 ```
 
-Not a child group of the service. *The service itself.* And the whole family is flat:
+Read that answer as "I am in the box belonging to `discord-claude.service`". Not a smaller box tucked inside it. The service's own box.
+
+You might hope the helpers at least sit in some nested compartment, where a shutdown aimed at the main program would miss them. They don't. Here's the whole family listed out:
 
 ```
 $ systemd-cgls \
@@ -33,7 +48,9 @@ CGroup /system.slice/discord-claude.service:
 └─589422 head -8
 ```
 
-Three generations — `python bot.py` → the CLI → `bash` — and every one of them is a direct member of the same group. The kernel's own list says the same thing. This was a separate capture, so the short-lived shell PIDs differ, but the bot (157308) and the CLI (586476) are the same:
+Three generations — the bot itself, then the CLI it started, then the shell — and all of them are listed flat, as direct members of one box. The numbers on the left are process IDs, Linux's way of naming each running program.
+
+The kernel's own membership list agrees. This was a separate capture, so the short-lived shell IDs are different, but the bot (157308) and the CLI (586476) are the same two:
 
 ```
 $ cat /sys/fs/cgroup/system.slice/\
@@ -44,13 +61,15 @@ discord-claude.service/cgroup.procs
 587503
 ```
 
-So when that shell runs `systemctl restart discord-claude`, it's asking systemd to tear down a group it's standing in. Like sawing off the branch you're sitting on, except the tree grows back and you don't.
+So when that shell asks for the service to be restarted, it is asking for the teardown of a box it is standing in. Like sawing off the branch you're sitting on — except the tree grows back and you don't.
 
 ## Two sensible defaults that team up against you
 
-**Children inherit the cgroup.** A process started with `fork()` begins life in its parent's cgroup. Nothing about spawning a subprocess moves it out. You'd have to move it on purpose, and neither the CLI nor the shell has any reason to.
+Neither of these is a bug. Each one is the right call on its own. Together they're a trap.
 
-**`KillMode=control-group` is the default.** This unit doesn't override it:
+**Helpers inherit the box.** When a program launches another program, the new one starts life in its parent's box. Nothing about being a child moves you out. You'd have to move yourself out deliberately, and neither the CLI nor the shell has any reason to.
+
+**"Shut down everything in the box" is the default.** The setting is called `KillMode`, and my unit never sets it, so it gets systemd's default:
 
 ```
 $ systemctl show discord-claude \
@@ -63,41 +82,52 @@ KillMode=control-group
 KillSignal=15
 ```
 
-(Re-checked on 2026-09-17.) The unit file has no `KillMode` line at all — the value comes from systemd's default. That's what makes this a trap: nobody chose it.
+(Re-checked on 2026-09-17.) In plain words, that output says: shut down *every* program in the box (`KillMode=control-group`); ask politely first rather than force-killing (`KillSignal=15` is the "please exit" signal); don't give anything its own sub-box to hide in (`Delegate=no`); and if this service stops for any reason, bring it back 15 seconds later (`Restart=always`, `RestartUSec=15s`).
 
-`KillMode=control-group` means stopping the unit sends SIGTERM to *every* process in its cgroup. `Delegate=no` means nothing under the unit gets its own sub-group to hide in. Everything sits in one flat pile, and the stop hits all of it.
+That last line matters later. Keep it in mind.
+
+The reason this catches people is that nobody chose it. There's no `KillMode` line in my unit file to go and find. The behaviour arrives by default.
 
 ## `sleep 1` won't save you
 
-It's tempting to see this as a timing problem — the restart got to you before you finished — and reach for a `sleep`.
+The instinct is to read this as a timing problem — the shutdown reached me before I finished talking — and reach for a short pause.
 
-It isn't a race. The stop is aimed at "every process in this cgroup", and you're in the cgroup the whole time. There's no moment where you're outside the target. Sleeping just changes *when* you get hit.
+It isn't a race. The shutdown isn't aimed at a moment, it's aimed at a place: *every program in this box*. You are in the box for the whole duration. There is no instant at which you're standing somewhere else. Waiting just moves when you get hit.
 
 ## The restart still worked (probably)
 
 This is the bit that changes how you debug it.
 
-`systemctl` is just a client. It asks PID 1 (systemd itself) over D-Bus to queue a restart job, then waits to hear how it went. Once the job is queued, it belongs to PID 1 — and PID 1 isn't in your cgroup. Killing the client doesn't cancel the job, any more than closing a browser tab cancels an order you already placed.
+The `systemctl` command you type isn't the thing doing the work. It's a messenger. It hands a request to systemd itself — the very first program the machine starts, which outlives everything else — and then waits around to report back how it went.
 
-So the restart should still complete. What you lose is the *caller*, and everything it still had going: the reply it hadn't sent, the rest of the script, the exit status you meant to check.
+Once that request has been accepted, it belongs to systemd, and systemd is not in your box. Killing the messenger doesn't cancel the request, any more than closing a browser tab cancels an order you already placed.
 
-"The restart failed" and "the thing that asked for the restart isn't around to see it succeed" look exactly the same from the terminal: silence.
+So the restart should still go through. What you lose is the *caller* and everything it still had pending: the reply it hadn't sent, the rest of the script, the result it meant to check.
 
-> **What I didn't test.** This section is reasoning from how systemd's
-> job model works, not an experiment. Proving it means creating a
-> throwaway unit, restarting it from inside itself, and checking
-> `NRestarts` and `ActiveEnterTimestamp` afterwards. I haven't done that
-> on this Pi, so treat it as argued, not observed.
+Which leaves you with two very different situations that look identical from the outside:
+
+- the restart failed, and
+- the restart worked, but nobody who cared about it is still around to see.
+
+Both look like silence.
+
+> **What I didn't test.** This section is reasoning from how systemd
+> hands out and owns jobs, not an experiment. Proving it means creating
+> a throwaway service, restarting it from inside itself, and then
+> checking its restart counter and start timestamp afterwards. I
+> haven't done that on this Pi, so treat it as argued, not observed.
 
 ## Four things you'll try that don't really help
 
-**`nohup`, `setsid`, `disown`, `&`.** The reflex, and none of them change your cgroup. `nohup` detaches you from the terminal; `setsid` gives you a new session and process group. The cgroup is a different thing from all of those, and `KillMode=control-group` only looks at the cgroup.
+**`nohup`, `setsid`, `disown`, `&`.** These are the usual tools for cutting a command loose so it survives after you walk away, and they're the first thing everyone reaches for. None of them move you to a different box. They detach you from the terminal, or give you a fresh session — real things, just not *this* thing. The shutdown only looks at the box.
 
-**`systemctl restart --no-block`.** Returns straight away instead of waiting, which sounds like exactly the fix. But now your script is racing the stop job, and systemd is quick. I'd expect the next line not to run. (Not measured either — same missing throwaway unit.)
+**`systemctl restart --no-block`.** This tells the messenger not to wait around for the answer, which sounds like precisely the fix. But your script is now racing the shutdown, and systemd is quick. I'd expect the next line never to run. (Also not measured — same missing throwaway service.)
 
-**`KillMode=mixed`.** SIGTERM goes to the main process only; everything left in the cgroup gets SIGKILL once the main process is gone. Your helper dodges the TERM and then gets killed anyway.
+**`KillMode=mixed`.** This politely asks only the main program to exit, then force-kills whatever is still in the box once it's gone. Your helper dodges the polite request and gets force-killed a moment later. Worse, not better.
 
-**`KillMode=process`.** This one does protect you — only the main process gets killed. But systemd's own `systemd.kill` man page labels it "not recommended!", because leftover processes running outside the service's lifecycle are exactly the mess cgroups exist to prevent. Plenty of packaged services set it anyway — on this Pi that includes `ssh`, `cron`, `NetworkManager` and `docker`. Those are deliberate exceptions by their maintainers, not a pattern to copy into your own unit.
+**`KillMode=process`.** This one genuinely does protect you: only the main program is shut down, and the rest of the box is left alone. But systemd's own documentation labels it "not recommended!", because stray programs outliving the service they belong to are the exact mess that boxes exist to prevent.
+
+Plenty of packaged services set it anyway — on this Pi that includes `ssh`, `cron`, `NetworkManager` and `docker`. (This is why restarting SSH over SSH doesn't drop you: that unit opts out.) Those are deliberate exceptions, chosen by people who maintain those programs for a living. Not a pattern to copy into your own unit because it made one annoyance go away.
 
 ## Three ways to restart without shooting yourself
 
@@ -105,15 +135,15 @@ So the restart should still complete. What you lose is the *caller*, and everyth
 
 The honest first answer, and most write-ups skip it.
 
-This unit has `Restart=always` and `RestartUSec=15s`. A process that wants to restart can simply exit, and systemd brings it back fifteen seconds later. No extra units, no timers, nothing to get wrong.
+Remember `Restart=always` and `RestartUSec=15s` from that output earlier. They mean: if this service stops for any reason at all, start it again 15 seconds later. So a program that wants to be restarted doesn't need to issue any order. It can simply stop, and the manager brings it back.
 
-If your unit has no restart policy, adding one is a smaller change than anything below.
+No extra pieces, nothing to get wrong. If your service has no restart policy, adding one is a smaller change than anything below.
 
-### 2. Hand the restart to someone outside — with a delay if you need one
+### 2. Hand the job to someone standing outside
 
-Exiting is fine when nothing's in flight. It's not fine when the process is in the middle of something it has to finish — like a reply it's been asked for.
+Exiting is fine when nothing is in flight. It's not fine when the program is in the middle of something it has to finish — like a reply it has been asked for and hasn't sent.
 
-That's exactly what happened on **2026-07-10**. A config fix needed the bot to restart, but the bot was mid-task. My note from that night:
+That's exactly the situation on **2026-07-10**. A config fix needed the bot restarted, but the bot was mid-task. My note from that night:
 
 ```
 Scheduled `systemctl restart discord-claude`
@@ -123,12 +153,14 @@ running bot picks up the new flag — delayed so
 the in-flight Claude task could reply first.
 ```
 
-There are two separate problems here, and the fix has two halves. It's worth being precise about which does what:
+So: instead of giving the order myself, I asked systemd to create a tiny throwaway service whose only job was to give the order, two minutes later.
 
-- **`systemd-run` fixes the cgroup problem.** The temporary unit it creates sits next to the bot in `system.slice`, not inside it. The SIGTERM doesn't reach it.
-- **The delay fixes something else entirely.** It has nothing to do with cgroups. It's there so the in-flight reply can land before the restart hits. The note says so directly.
+There are two separate problems being solved there, and it's worth being precise about which half does what, because this is where the explanation usually goes wrong:
 
-Mixing those two up is how this gets explained wrong. `systemd-run` with no delay is enough to *survive*; the 120 seconds bought the *reply*.
+- **The throwaway service fixes the box problem.** systemd creates it *next to* the bot rather than inside it, so the shutdown never reaches it.
+- **The two-minute delay fixes something else entirely.** It has nothing to do with boxes. It's there so the reply in flight can land first. My note says exactly that.
+
+Standing outside the box is what makes you *survive*. The 120 seconds bought the *reply*. One without the other solves half the problem.
 
 The command looks roughly like this:
 
@@ -139,19 +171,19 @@ $ systemd-run --collect \
     systemctl restart discord-claude
 ```
 
-> **Reconstructed, not copied.** The note records a transient timer
-> set to +120 s. It doesn't record the exact flags, and the Pi's
-> journal no longer goes back to July, so there's nothing to check it
+> **Reconstructed, not copied.** My note records a throwaway timer set
+> to +120 s. It doesn't record the exact flags, and the Pi's logs no
+> longer reach back to July, so there's nothing left to check it
 > against. The interval is real; the command line above is my
 > reconstruction.
 
-`--collect` matters. Without it, a run that *fails* stays loaded in the failed state until someone resets it, and the unit name stays taken — so the next attempt with the same `--unit=` name won't start.
+One flag there is worth knowing about. `--collect` tells systemd to tidy the throwaway service away afterwards. Without it, a run that *fails* hangs around in a failed state until someone clears it by hand — and while it's there, the name is taken, so your next attempt using the same name won't start at all.
 
-The same bot has since picked up this pattern in its own code. A later command that does something drastic schedules it through `systemd-run --collect --on-active=…` instead of calling `systemctl` directly, and the code comment explains why: a direct call would kill the bot mid-reply, *"because the bot lives inside its own unit's cgroup."*
+The bot has since learned this pattern itself. A command in its code that does something drastic now schedules the work through a throwaway service instead of running it directly, and the comment next to it says why: a direct call would kill the bot mid-reply, *"because the bot lives inside its own unit's cgroup."*
 
 ### 3. Or never restart from inside at all
 
-The pattern that runs on this Pi day to day doesn't restart from inside. A separate watchdog unit does it:
+The pattern that actually runs on this Pi day to day doesn't restart from inside. A separate little service does it, and that service checks whether the bot is still alive:
 
 ```ini
 [Unit]
@@ -163,7 +195,7 @@ Type=oneshot
 ExecStart=/home/gaurav/Projects/discord-claude-bot/watchdog.sh
 ```
 
-And the last lines of that script, word for word:
+And here are the last two lines of that script, word for word:
 
 ```bash
 logger -t discord-claude-watchdog \
@@ -171,13 +203,13 @@ logger -t discord-claude-watchdog \
 systemctl restart "$UNIT"
 ```
 
-That's the exact command that would have killed the bot's own shell. Here it's completely safe, because `discord-claude-watchdog.service` is a neighbour in `system.slice`, not something living inside the unit it restarts.
+That last line is the *exact* command that would have killed the bot's own shell. Here it's completely safe — because the watchdog is its own service, a neighbour of the bot rather than a resident of its box.
 
-Same command, same Pi, opposite outcome — decided entirely by where the caller sits in the tree. If you take one thing from this post, take that.
+Same command, same Pi, opposite outcome, decided entirely by who's holding it. If you take one thing from this post, take that.
 
-## The man pages don't spell this out
+## The manuals don't join the dots
 
-As far as I can find, they don't. I searched the six pages you'd reasonably check, on this Pi, for phrasings like "own control group", "its own cgroup", "restart itself" and "kill … caller":
+As far as I can find, they don't say this anywhere. I searched the six manual pages you'd reasonably check, on this Pi, for phrasings like "own control group", "its own cgroup", "restart itself" and "kill … caller":
 
 ```
 systemctl                  0
@@ -188,18 +220,18 @@ systemd.unit               0
 systemd.resource-control   0
 ```
 
-Zero hits on `systemd 257 (257.9-1~deb13u1)`, first on 2026-09-06 and again on 2026-09-17. Every individual fact is in there somewhere — cgroup membership, the `KillMode` default, what `systemd-run` does — but nobody joins them up.
+Zero hits on `systemd 257 (257.9-1~deb13u1)`, first on 2026-09-06 and again on 2026-09-17. Every individual fact is in there somewhere — that helpers inherit the box, that shutting down means shutting down the whole box, what the throwaway-service tool does. Nobody puts them next to each other and says what happens.
 
-To be fair: the *ssh* version of this question ("why doesn't restarting ssh over ssh drop me?") is answered all over the internet, and answered well. That's a narrower case with its own `KillMode=process` baked into the shipped unit. The general case — your script is a grandchild of the unit it's restarting — is the one I couldn't find written down.
+To be fair, the narrow version of this question — "why doesn't restarting SSH over SSH disconnect me?" — is answered all over the internet, and answered well. That case has the opt-out baked into the shipped unit, as we saw. The general case, where your script is a grandchild of the service it's restarting, is the one I couldn't find written down.
 
 ## The whole post in six bullets
 
-- You're probably in the cgroup. `cat /proc/self/cgroup` will tell you.
-- `KillMode=control-group` is the default, and it means "everything in the cgroup", including you.
-- The restart itself should still go through. PID 1 owns the job.
-- Try exiting first, if the unit has `Restart=`.
-- If something has to finish first, `systemd-run --collect` puts the restarter outside the cgroup, and a delay — separately — buys time for the in-flight work.
-- Best of all, restart from a unit that was never inside in the first place.
+- You're probably inside the box. `cat /proc/self/cgroup` will tell you.
+- Shutting a service down means shutting down everything in its box, including whoever asked.
+- The restart itself should still happen. The manager owns that job, and the manager isn't in your box.
+- Try just exiting first, if your service has a restart policy.
+- If something has to finish first, have a throwaway service outside the box give the order — and add a delay, separately, to buy time for the work in flight.
+- Best of all, give the order from something that was never inside in the first place.
 
 ---
 

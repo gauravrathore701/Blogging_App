@@ -7,6 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "build:dev": "BLOG_INCLUDE_DRAFTS=1 BLOG_SITE=https://dev.cursedshrine.com npm run build",
+    "build:dev:all": "BLOG_DRAFTS_ONLY=0 npm run build:dev",
     "build:prod": "BLOG_SITE=https://cursedshrine.com npm run build",
     "preview": "astro preview",
     "check": "astro check"
