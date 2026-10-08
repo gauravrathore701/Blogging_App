@@ -5,7 +5,7 @@ date: 2026-09-06
 updated: 2026-09-17
 category: tech
 tags: ["pagefind", "minisearch", "static-site", "astro", "raspberry-pi"]
-draft: true
+draft: false
 ---
 
 I wanted search on this blog, which runs on a Raspberry Pi 5. I picked Pagefind, and it crashed during the build with `<jemalloc>: Unsupported system page size` — the Pi 5's 16 KB memory pages versus an allocator that wasn't built for them. So I ripped it out, wrote a small MiniSearch setup instead, and started drafting a post saying Pagefind simply can't run on this hardware.
