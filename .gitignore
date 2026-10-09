@@ -20,3 +20,5 @@ build/
 
 # Local working notes, research and infra docs. Never published.
 .claude/
+
+docs/
