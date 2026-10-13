@@ -23,6 +23,26 @@ if grep -rlq "Draft — visible on the dev site only" dist/ 2>/dev/null; then
     exit 1
 fi
 
+# Leak gate. Checks ONE thing before anything reaches prod: does this build
+# expose personal data about Gaurav, or detail that helps someone attack this
+# Pi? Two independent layers, either one blocks:
+#   1. .claude/tools/leak_scan.sh   deterministic shapes (IPs, keys, UUIDs, ...)
+#   2. .claude/tools/leak_review.py an independent `claude -p` per changed page
+# The gate lives outside this public repo on purpose — its patterns are a list
+# of what must never ship. Missing gate = refuse, never publish unscanned.
+GATE=".claude/tools"
+if [ ! -x "$GATE/leak_scan.sh" ] || [ ! -f "$GATE/leak_review.py" ]; then
+    echo "ABORT: leak gate missing under $GATE — refusing to publish unscanned" >&2
+    exit 1
+fi
+"$GATE/leak_scan.sh" dist || { echo "ABORT: leak_scan blocked this deploy" >&2; exit 1; }
+if [ "${LEAK_GATE_SKIP_AGENT:-0}" = "1" ]; then
+    echo "leak gate: agent review SKIPPED (LEAK_GATE_SKIP_AGENT=1)" >&2
+else
+    python3 "$GATE/leak_review.py" --build dist --live "$TARGET" \
+        || { echo "ABORT: agent leak review blocked this deploy" >&2; exit 1; }
+fi
+
 cp -a dist/. "$STAGE/"
 
 sudo mkdir -p "$TARGET"
