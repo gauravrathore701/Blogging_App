@@ -4,7 +4,7 @@ description: "Under a /blog base path, new URL('sitemap-index.xml', site) quietl
 date: 2026-09-05
 category: tech
 tags: ["astro", "seo", "sitemap", "robots-txt", "cloudflare"]
-draft: true
+draft: false
 ---
 
 This blog runs on a Raspberry Pi and lives at `cursedshrine.com/blog`. The first version of its `robots.txt` would have sent search engines looking for my sitemap at `https://cursedshrine.com/sitemap-index.xml`. That address is a 404. It has always been a 404. It isn't even served by the blog — it belongs to a different site on the same machine. The build was green, the sitemap itself was perfect, and nothing anywhere complained. The line that caused it came straight out of Astro's own documentation.
@@ -89,7 +89,7 @@ That behaviour is older than most JavaScript frameworks, and it's written down. 
 >    excluding any characters after the right-most "/" in the base URI
 >    path...)
 
-Both branches eat `/blog`, just by different routes. With `https://cursedshrine.com` the path is empty, so the first rule fires and you get `/sitemap-index.xml`. With `https://cursedshrine.com/blog`, the word `blog` comes after the last `/`, so the second rule drops it and you land in exactly the same place. The WHATWG URL Standard that Node follows behaves the same way.
+Both branches land on the domain root, just by different routes. With `https://cursedshrine.com` the path is empty, so the first rule fires and you get `/sitemap-index.xml`. With `https://cursedshrine.com/blog`, the word `blog` comes after the last `/`, so the second rule drops it and you land in exactly the same place. The WHATWG URL Standard that Node follows behaves the same way.
 
 The API did what the spec says. The spec isn't going to change for my blog.
 
@@ -116,12 +116,11 @@ All 11 URLs in it include `/blog`. The sitemap was never wrong — only my hand-
 
 ```
 $ curl -sI \
-  http://localhost:4176/sitemap-index.xml
+  http://localhost:<port>/sitemap-index.xml
 HTTP/1.0 404 File not found
-Server: SimpleHTTP/0.6 Python/3.13.5
 ```
 
-That's the main site's little Python server saying no. Nothing in the blog's logs could ever have shown me this, because the request was never the blog's.
+That's the main site's server saying no. Nothing in the blog's logs could ever have shown me this, because the request was never the blog's.
 
 **Search Console.** This is the one that's documented. From Google's help page for the Sitemaps report:
 
@@ -219,7 +218,7 @@ The blog still serves its own `/blog/robots.txt` with the corrected line. It's h
 
 ## What I didn't measure
 
-I'm not claiming this cost me anything. The in-blog fix was committed at 07:59:54 IST on 2026-09-02, and production went live around 08:00 that same morning, so the broken line may never have been served to a crawler at all. I can't prove that either way: `/var/log/caddy/` on this Pi is empty, so there's no access log to check.
+I'm not claiming this cost me anything. The in-blog fix was committed at 07:59:54 IST on 2026-09-02, and production went live around 08:00 that same morning, so the broken line may never have been served to a crawler at all. I can't prove that either way: I have no access logs for that period.
 
 There's no traffic story here, no ranking drama, no before-and-after graph. The honest stakes are smaller: a way for search engines to find the blog was dead, and nothing would have told me.
 
@@ -242,7 +241,7 @@ This isn't really about Astro. Anywhere a URL is built from two settings your fr
 
 **Find the values your framework puts together for you, then find the one spot where you put them together yourself.** That's where the bug is, and it won't throw, because a wrong string is still a string.
 
-If your site lives in a subfolder, do two things right now: fetch your own `Sitemap:` URL, and then fetch the `robots.txt` at the very top of your domain to see whether it mentions your sitemap at all. It takes about eight seconds, and the way this fails is silence.
+If your site lives in a subfolder, do two things right now: fetch your own `Sitemap:` URL, and then fetch the `robots.txt` at the very top of your domain to see whether it mentions your sitemap at all. It takes seconds, and the way this fails is silence.
 
 ---
 

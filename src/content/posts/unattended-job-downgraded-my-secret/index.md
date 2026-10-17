@@ -14,12 +14,12 @@ My token file is locked so only I can read it. The `.git/config` files are reada
 Here's the evidence, three files side by side:
 
 ```
-$ stat -c '%A %n' ~/.github_token \
+$ stat -c '%A %n' ~/<token-file> \
     ~/Projects/bloging-app/.git/config \
-    ~/Projects/mongo-pi/.git/config
--rw------- .../.github_token
+    ~/Projects/project-b/.git/config
+-rw------- .../<token-file>
 -rw-r--r-- .../bloging-app/.git/config
--rw-rw-r-- .../mongo-pi/.git/config
+-rw-rw-r-- .../project-b/.git/config
 ```
 
 If you don't read Linux permissions: `rw-------` means only I can read the file. `rw-r--r--` and `rw-rw-r--` mean anyone on the machine can. The first file is the token, locked down on purpose. The other two are where the script copied it.
@@ -35,7 +35,7 @@ The logs proved me wrong almost immediately.
 The job runs from cron, Linux's built-in scheduler:
 
 ```
-0 8 * * * /home/gaurav/routines/git_sync.sh \
+0 8 * * * ~/routines/git_sync.sh \
   >> .../logs/git_sync_cron.log 2>&1
 ```
 
@@ -99,14 +99,14 @@ The same thing happened to three folders, on three different mornings:
 
 ```
 folder        created       processed
-api-nexus     06-22 16:18   06-23 08:00
-mongo-pi      07-15 15:10   07-16 08:00
+project-a     06-22 16:18   06-23 08:00
+project-b     07-15 15:10   07-16 08:00
 bloging-app   09-02 00:49   09-02 08:00
 ```
 
 I'd make a folder in the afternoon or late at night. By the next morning it had git history, a new branch, and an attempt to put it on GitHub.
 
-One near miss scared me. On 2026-09-02 I created a folder called `pi-infra` at **08:13:31**, fourteen minutes after that morning's run had finished. It holds configuration for the services on this Pi. It went onto a "don't touch" list at 08:20:01, and I removed the repo-creation code from the script a few minutes after that.
+One near miss scared me. On 2026-09-02 I created a new folder at **08:13:31**, fourteen minutes after that morning's run had finished. It holds configuration for the services on this Pi. It went onto a "don't touch" list at 08:20:01, and I removed the repo-creation code from the script a few minutes after that.
 
 Without those changes, the next morning's run would have found a folder full of infrastructure config and tried to put it on GitHub. I only caught it because I happened to be reading the script that morning for another reason.
 
@@ -162,7 +162,7 @@ Four reasons, and all four apply to other scheduled jobs:
 - **The dangerous code rarely ran.** The part that added a GitHub address ran on three folders in the first 83 runs. The other runs did boring, correct things.
 - **The dangerous code was the silent code.** Almost everything else the script did went into the log. This part didn't.
 - **The error I could see pointed somewhere else.** Every morning the log said `ERROR — push failed`, which looks like a network or permissions problem. It was red, it was obvious, and it sent me looking in the wrong place for weeks. The token being copied produced no line at all.
-- **The safety check I did have worked perfectly.** Before its first commit, the script adds `.env`, `*.key`, `*.pem` and similar files to `.gitignore`, so secrets don't get committed. It worked: `mongo-pi/.env`, which holds database passwords, never made it into a commit. I'd thought hard about secrets **leaving** a project. The secret that moved that morning came **into** one. And when a safety check visibly works, you stop looking.
+- **The safety check I did have worked perfectly.** Before its first commit, the script adds `.env`, `*.key`, `*.pem` and similar files to `.gitignore`, so secrets don't get committed. It worked: `project-b/.env`, which holds database passwords, never made it into a commit. I'd thought hard about secrets **leaving** a project. The secret that moved that morning came **into** one. And when a safety check visibly works, you stop looking.
 
 ## Two ideas that changed how I write these jobs
 
@@ -236,7 +236,7 @@ The private key was still safe on the Pi, so all I had to do was add its public 
 
 ```
 $ ssh -T git@github.com
-Hi gauravrathore701! You've successfully
+Hi <user>! You've successfully
 authenticated, but GitHub does not provide
 shell access.
 ```
@@ -252,7 +252,7 @@ That's the same lesson as the rest of this post, pointed the other way. A cleanu
 - **Pushes go over SSH**, and I tested that connection after the cleanup, not just before.
 - **New folders get a local backup commit and a line in the daily report.** Nothing goes to GitHub without me.
 
-The exposure was real but contained. The token sat in a file anyone on the Pi could read: in `mongo-pi` from 2026-07-16 to 2026-09-05, and in `bloging-app` from 2026-09-02 to 2026-09-05. This is a single-user machine, and nothing served those folders to the internet.
+The exposure was real but contained. The token sat in a file anyone on the Pi could read: in `project-b` from 2026-07-16 to 2026-09-05, and in `bloging-app` from 2026-09-02 to 2026-09-05. This is a single-user machine, and nothing served those folders to the internet.
 
 ---
 

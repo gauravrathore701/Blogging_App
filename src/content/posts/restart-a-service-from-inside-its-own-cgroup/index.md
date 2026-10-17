@@ -30,17 +30,17 @@ Every program on Linux can ask which box it's in. Here's that shell asking, capt
 
 ```
 $ cat /proc/self/cgroup
-0::/system.slice/discord-claude.service
+0::/system.slice/mybot.service
 ```
 
-Read that answer as "I am in the box belonging to `discord-claude.service`". Not a smaller box tucked inside it. The service's own box.
+Read that answer as "I am in the box belonging to `mybot.service`". Not a smaller box tucked inside it. The service's own box.
 
 You might hope the helpers at least sit in some nested compartment, where a shutdown aimed at the main program would miss them. They don't. Here's the whole family listed out:
 
 ```
 $ systemd-cgls \
-    /system.slice/discord-claude.service
-CGroup /system.slice/discord-claude.service:
+    /system.slice/mybot.service
+CGroup /system.slice/mybot.service:
 ├─157308 .../venv/bin/python bot.py
 ├─586476 .../claude --output-format …
 ├─589399 /bin/bash -c source …
@@ -54,7 +54,7 @@ The kernel's own membership list agrees. This was a separate capture, so the sho
 
 ```
 $ cat /sys/fs/cgroup/system.slice/\
-discord-claude.service/cgroup.procs
+mybot.service/cgroup.procs
 157308
 586476
 587482
@@ -72,7 +72,7 @@ Neither of these is a bug. Each one is the right call on its own. Together they'
 **"Shut down everything in the box" is the default.** The setting is called `KillMode`, and my unit never sets it, so it gets systemd's default:
 
 ```
-$ systemctl show discord-claude \
+$ systemctl show mybot \
     -p KillMode -p KillSignal \
     -p Restart -p RestartUSec -p Delegate
 Restart=always
@@ -146,9 +146,9 @@ Exiting is fine when nothing is in flight. It's not fine when the program is in 
 That's exactly the situation on **2026-07-10**. A config fix needed the bot restarted, but the bot was mid-task. My note from that night:
 
 ```
-Scheduled `systemctl restart discord-claude`
+Scheduled `systemctl restart mybot`
 via transient systemd timer
-(`restart-discord-claude-once`, +120 s) so the
+(`restart-mybot-once`, +120 s) so the
 running bot picks up the new flag — delayed so
 the in-flight Claude task could reply first.
 ```
@@ -167,8 +167,8 @@ The command looks roughly like this:
 ```
 $ systemd-run --collect \
     --on-active=120 \
-    --unit=restart-discord-claude-once \
-    systemctl restart discord-claude
+    --unit=restart-mybot-once \
+    systemctl restart mybot
 ```
 
 > **Reconstructed, not copied.** My note records a throwaway timer set
@@ -187,18 +187,18 @@ The pattern that actually runs on this Pi day to day doesn't restart from inside
 
 ```ini
 [Unit]
-Description=Restart discord-claude if its heartbeat is stale
-After=discord-claude.service
+Description=Restart mybot if its heartbeat is stale
+After=mybot.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/gaurav/Projects/discord-claude-bot/watchdog.sh
+ExecStart=/path/to/watchdog.sh
 ```
 
 And here are the last two lines of that script, word for word:
 
 ```bash
-logger -t discord-claude-watchdog \
+logger -t mybot-watchdog \
   "$reason -> restarting $UNIT"
 systemctl restart "$UNIT"
 ```

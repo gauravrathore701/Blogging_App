@@ -82,17 +82,17 @@ rules are elided:
 
 ```yaml
 ingress:
-  # MUST stay above the plain apex rules below, or 4176 swallows /blog.
+  # MUST stay above the plain apex rules below, or 8001 swallows /blog.
   - hostname: cursedshrine.com
     path: ^/blog
-    service: http://localhost:4182
+    service: http://localhost:8002
   - hostname: www.cursedshrine.com
     path: ^/blog
-    service: http://localhost:4182
+    service: http://localhost:8002
   - hostname: cursedshrine.com
-    service: http://localhost:4176
+    service: http://localhost:8001
   - hostname: www.cursedshrine.com
-    service: http://localhost:4176
+    service: http://localhost:8001
 
   # ... eight more one-hostname rules, one app each ...
 
@@ -112,9 +112,9 @@ Nine of the ten backends are boring. One hostname, one port, no way to
 get it wrong.
 
 The blog is the exception. `cursedshrine.com` was already an app on
-port 4176 before this blog existed, and I did not want a
+port 8001 before this blog existed, and I did not want a
 `blog.` subdomain. So the blog lives at `cursedshrine.com/blog`, served
-by a different local server on 4182, on a hostname that is already
+by a different local server on 8002, on a hostname that is already
 claimed.
 
 That means two rules for one hostname. And two rules for one hostname
@@ -159,10 +159,10 @@ The scratch file, with the two rules swapped:
 ```yaml
 ingress:
   - hostname: example.com
-    service: http://localhost:4176
+    service: http://localhost:8001
   - hostname: example.com
     path: ^/blog
-    service: http://localhost:4182
+    service: http://localhost:8002
   - service: http_status:404
 ```
 
@@ -176,17 +176,17 @@ $ cloudflared --config /tmp/cfd-check/wrong-order.yml \
     tunnel ingress rule https://example.com/blog/
 Matched rule #0
 	hostname: example.com
-	service: http://localhost:4176
+	service: http://localhost:8001
 
 $ ... tunnel ingress rule https://example.com/blog/some-post/
 Matched rule #0
 	hostname: example.com
-	service: http://localhost:4176
+	service: http://localhost:8001
 
 $ ... tunnel ingress rule https://example.com/
 Matched rule #0
 	hostname: example.com
-	service: http://localhost:4176
+	service: http://localhost:8001
 ```
 
 Every request. Including `/blog/`. The path rule sitting one line below
@@ -209,15 +209,15 @@ $ cloudflared --config ~/.cloudflared/config.yml \
 Matched rule #0
 	hostname: cursedshrine.com
 	path: ^/blog
-	service: http://localhost:4182
+	service: http://localhost:8002
 
 $ ... tunnel ingress rule https://cursedshrine.com/
 Matched rule #2
 	hostname: cursedshrine.com
-	service: http://localhost:4176
+	service: http://localhost:8001
 ```
 
-`/blog/` to 4182, `/` to 4176. Two rules, one hostname, and the only
+`/blog/` to 8002, `/` to 8001. Two rules, one hostname, and the only
 thing keeping them apart is line order.
 
 ## The turn: the validator has nothing to say about it
@@ -230,7 +230,7 @@ Validating rules from /tmp/cfd-check/wrong-order.yml
 OK
 
 $ cloudflared --config ~/.cloudflared/config.yml tunnel ingress validate
-Validating rules from /home/gaurav/.cloudflared/config.yml
+Validating rules from /home/user/.cloudflared/config.yml
 OK
 ```
 
@@ -313,7 +313,7 @@ at the front:
 $ ... tunnel ingress rule https://cursedshrine.com/x/blog
 Matched rule #2
 	hostname: cursedshrine.com
-	service: http://localhost:4176
+	service: http://localhost:8001
 ```
 
 `/x/blog` falls through to the apex, correctly. But there is no
@@ -324,7 +324,7 @@ $ ... tunnel ingress rule https://cursedshrine.com/blogsomething
 Matched rule #0
 	hostname: cursedshrine.com
 	path: ^/blog
-	service: http://localhost:4182
+	service: http://localhost:8002
 ```
 
 `/blogsomething`, `/blogroll`, `/blogging` — all routed to the blog
@@ -341,10 +341,10 @@ that it does rather than assuming:
 
 ```
 # path: ^/blog(/|$)
-/blog            -> 4182
-/blog/           -> 4182
-/blog/post/      -> 4182
-/blogsomething   -> 4176
+/blog            -> 8002
+/blog/           -> 8002
+/blog/post/      -> 8002
+/blogsomething   -> 8001
 ```
 
 One thing I could not find documented and so tested directly: **the
@@ -353,9 +353,9 @@ does not catch a request to `/` that merely mentions `/blog` in a
 parameter:
 
 ```
-/?redirect=/blog  -> 4176   (apex)
-/x?/blog          -> 4176   (apex)
-/blog?x=1         -> 4182   (blog)
+/?redirect=/blog  -> 8001   (apex)
+/x?/blog          -> 8001   (apex)
+/blog?x=1         -> 8002   (blog)
 ```
 
 Path only. That is what I wanted, but I would not have bet money on it
@@ -390,7 +390,7 @@ kind of thing that could quietly become false in a release.
 **And the tunnel is only half the path.** Every rule here ends at
 `http://localhost:PORT`. Something on this Pi still has to be listening
 on that port, on the right interface, speaking plain HTTP. Getting
-`localhost:4182` to bind correctly turned out to be its own hour, and
+`localhost:8002` to bind correctly turned out to be its own hour, and
 its own post.
 
 Live, as of today:

@@ -1,13 +1,13 @@
 ---
 title: "I told Caddy on my Raspberry Pi to stay on localhost. It listened everywhere and spoke HTTPS instead."
-description: "127.0.0.1:4184 in a Caddyfile gave me a 400 for plain HTTP and a port bound on every interface. Two separate Caddy behaviours, one typo, and the obvious fix hides only one."
+description: "A bare IP:port site address in a Caddyfile gave me a 400 for plain HTTP and a port bound on every interface. Two separate Caddy behaviours, one typo, and the obvious fix hides only one."
 date: 2026-09-05
 category: tech
 tags: ["caddy", "tls", "networking", "self-hosting", "raspberry-pi"]
-draft: true
+draft: false
 ---
 
-On 2 September I set up a dev copy of this blog on my Raspberry Pi, served by Caddy, and asked for it on `127.0.0.1:4184` — local only, nothing else on the network should see it. Two things went wrong at once. Requests got back a `400 Bad Request`, even though I hadn't configured HTTPS anywhere. And the port wasn't bound to loopback at all: it was listening on `*:4184`, every network interface on the Pi. My note from that night says it in one line: *a bare `127.0.0.1:4184` site address returned 400 and still bound `*:4184`.*
+On 2 September I set up a dev copy of this blog on my Raspberry Pi, served by Caddy, and asked for it on `127.0.0.1:8003` — local only, nothing else on the network should see it. Two things went wrong at once. Requests got back a `400 Bad Request`, even though I hadn't configured HTTPS anywhere. And the port wasn't bound to loopback at all: it was listening on `*:8003`, every network interface on the Pi. My note from that night says it in one line: *a bare `127.0.0.1:8003` site address returned 400 and still bound `*:8003`.*
 
 When I reproduced it on a spare port, the 400 came with this body:
 
@@ -21,7 +21,7 @@ So: no TLS configured, a TLS error anyway, and a "local only" site that wasn't. 
 
 ## You're probably here for a different 400
 
-`Client sent an HTTP request to an HTTPS server.` is a very popular error string, and nearly every page about it is about a reverse proxy: the client talks HTTPS and the backend talks HTTP, or the other way round. The Caddy forum threads carrying this exact message mostly come down to that kind of scheme mix-up, and one of them turned out to be two Caddy instances fighting over the same port.
+`Client sent an HTTP request to an HTTPS server.` is a very popular error string, and nearly every page about it is about a reverse proxy: the client talks HTTPS and the backend talks HTTP, or the other way round. The Caddy forum threads I found carrying this exact message come down to that kind of scheme mix-up, and one of them turned out to be two Caddy instances fighting over the same port.
 
 If you've got a `reverse_proxy` line, check its scheme first. You might be done in a minute.
 
@@ -133,9 +133,9 @@ A matcher miss would fail over HTTPS too. The route is fine. The transport is th
 ```
   Host: 127.0.0.1:45999        -> 400
   Host: 127.0.0.1              -> 400
-  Host: dev.cursedshrine.com   -> 400
+  Host: dev.example.com        -> 400
   Host: localhost:45999        -> 400
-  Host: 192.168.1.50:45999     -> 400
+  Host: 192.168.x.y:45999      -> 400
 ```
 
 The request never reached the matcher. There wasn't a request. There was a failed TLS handshake and a canned string.
@@ -232,20 +232,20 @@ Every step is what the automatic HTTPS docs say happens when Caddy knows a name 
 
 ## What fixed it
 
-The dev site and the production site on this Pi now both use a port-only site address with a separate `bind`. Here's `/etc/caddy/Caddyfile`, trimmed to the part that matters:
+The dev site and the production site on this Pi now both use a port-only site address with a separate `bind`. Here's `/etc/caddy/Caddyfile`, trimmed to the part that matters. The ports (8002 and 8003, here and in the intro) and web roots are placeholders, not the real ones; the shape of the config and output is unchanged:
 
 ```caddyfile
-:4184 {
+:8003 {
 	bind 127.0.0.1
-	root * /srv/blog-dev
+	root * /srv/site-dev
 	encode zstd gzip
 	header X-Robots-Tag "noindex, nofollow, noarchive"
 	...
 }
 
-:4182 {
+:8002 {
 	bind 127.0.0.1
-	root * /srv/blog
+	root * /srv/site
 	encode zstd gzip
 	...
 }
@@ -256,16 +256,16 @@ Compiled, that's:
 ```
 $ caddy adapt --config /etc/caddy/Caddyfile \
   | grep -o '"listen":\[[^]]*\]'
-"listen":["127.0.0.1:4182"]
-"listen":["127.0.0.1:4184"]
+"listen":["127.0.0.1:8002"]
+"listen":["127.0.0.1:8003"]
 ```
 
 And what the kernel actually has open, checked on 2026-09-17:
 
 ```
-$ ss -lnt | grep -E ':418[24] '
-LISTEN 0 4096 127.0.0.1:4182 0.0.0.0:*
-LISTEN 0 4096 127.0.0.1:4184 0.0.0.0:*
+$ ss -lnt | grep -E ':800[23] '
+LISTEN 0 4096 127.0.0.1:8002 0.0.0.0:*
+LISTEN 0 4096 127.0.0.1:8003 0.0.0.0:*
 ```
 
 No host anywhere in the config, so no automatic HTTPS, so no 400. An explicit `bind`, so no wildcard. Both sites are reachable only from the Pi itself; anything public in front of them comes in through a tunnel, which is [a different post](/blog/posts/one-pi-one-tunnel-many-sites/).
@@ -274,11 +274,11 @@ The habit I've kept from this: **after any Caddyfile change, check `ss`, not `cu
 
 ## Versions, and what I didn't check
 
-Everything measured here is Caddy **2.6.2**, as packaged by Debian trixie (`2.6.2-12+deb13u1`). Upstream released 2.6.2 on 2022-10-13. The latest stable release, as of 2026-09-17, is 2.11.4 from 2026-06-03. That's a big gap, so to be straight about it: **I haven't run any of this on a current build.**
+Everything measured here is Caddy **2.6.2**, the Debian trixie package. That isn't the newest release, so treat the measurements as 2.6.2 behaviour.
 
-What I can say is that Caddy's current docs still describe exactly this design. I re-fetched the concepts page and the `bind` page on 2026-09-17, and the three sentences quoted above are on them word for word. That's documentation, not a measurement. If you're on 2.11.x, run `caddy adapt` on your own Caddyfile rather than trusting my 2.6.2.
+What I can say is that Caddy's current docs still describe exactly this design. I re-fetched the concepts page and the `bind` page on 2026-09-17, and the three sentences quoted above are on them word for word. That's documentation, not a measurement. If you're on a newer release, run `caddy adapt` on your own Caddyfile rather than trusting my 2.6.2.
 
-I also don't know which client first hit that 400 on port 4184; my note only records the symptom.
+I also don't know which client first hit that 400 on port 8003; my note only records the symptom.
 
 And since this could read like a complaint: **the documentation is correct and complete.** Everything I needed was there. The catch is that it's spread out — "the host is a matcher", "sites bind to all interfaces" and "a host turns on automatic HTTPS" are three separate sentences in separate sections, and none of them is in front of you while you're typing what you think is a bind address.
 
@@ -286,4 +286,4 @@ And since this could read like a complaint: **the documentation is correct and c
 
 ---
 
-*Observed on this Pi: Caddy 2.6.2 (Debian `2.6.2-12+deb13u1`, built with go1.24.4). The original incident is from 2026-09-02. The throwaway runtime tests (400 vs 200, Host headers, bind + host, CA install) were run on 2026-09-02. The `caddy adapt` results, the live `ss` output, the trust-store check, the doc quotes and the release dates were re-checked on 2026-09-17.*
+*Observed on this Pi: Caddy 2.6.2, Debian trixie package. The original incident is from 2026-09-02. The throwaway runtime tests (400 vs 200, Host headers, bind + host, CA install) were run on 2026-09-02. The `caddy adapt` results, the live `ss` output, the trust-store check and the doc quotes were re-checked on 2026-09-17.*
