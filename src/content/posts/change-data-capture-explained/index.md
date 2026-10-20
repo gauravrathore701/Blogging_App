@@ -1,10 +1,10 @@
 ---
 title: "Change data capture (CDC): what it is and what it solves"
 description: "What change data capture is, why dual writes and polling fall short, how log-based CDC reads the database's own log, and what it costs."
-date: 2026-10-18
+date: 2026-10-19
 category: tech
 tags: ["backend-concepts", "databases", "postgres", "change-data-capture"]
-draft: true
+draft: false
 ---
 
 In the [last Backend Concepts post](/blog/posts/write-ahead-logging-explained/) I learned that databases write every change to a log before they touch the real data. That log exists for crash recovery. But while reading about it, I kept seeing the same log reused for something else: other programs reading it to find out what changed. That idea has a name, change data capture, or CDC. This post is my notes on what it is and the problem it solves.
