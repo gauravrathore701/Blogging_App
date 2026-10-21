@@ -1,10 +1,10 @@
 ---
 title: "Consistent hashing: what it is and what it solves"
 description: "Why hash mod N reshuffles almost every key when you add a server, how the consistent hashing ring moves only a few, and why virtual nodes fix the uneven load."
-date: 2026-10-19
+date: 2026-10-20
 category: tech
 tags: ["backend-concepts", "distributed-systems", "caching", "consistent-hashing"]
-draft: true
+draft: false
 ---
 
 The [last two](/blog/posts/write-ahead-logging-explained/) [Backend Concepts posts](/blog/posts/change-data-capture-explained/) were about a single database and its log. This one is about what happens when the data doesn't fit on one machine: how do you decide which machine each piece of data lives on, in a way that doesn't fall apart the moment you add one more? The answer most systems use is called consistent hashing. These are my notes on it.
