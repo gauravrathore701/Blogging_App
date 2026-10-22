@@ -1,10 +1,10 @@
 ---
 title: "The bulkhead pattern: keeping one slow dependency from sinking everything"
 description: "How one hanging dependency can use up a shared thread or connection pool and take healthy features down with it, and how giving each dependency its own bounded pool contains the damage."
-date: 2026-10-20
+date: 2026-10-21
 category: tech
 tags: ["backend-concepts", "distributed-systems", "resilience", "bulkhead"]
-draft: true
+draft: false
 ---
 
 The [last Backend Concepts post](/blog/posts/consistent-hashing-explained/) was about spreading data across many machines. This one is about what happens when one of the things your service depends on stops answering. Usually that isn't a crash. The dependency just gets slow, and that turns out to be worse. The bulkhead pattern is the usual defence. These are my notes on it.
