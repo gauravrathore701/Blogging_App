@@ -1,10 +1,10 @@
 ---
 title: "Tail latency: why the slowest 1% of calls ends up slowing most of your requests"
 description: "Why averages hide slow requests, how fan-out turns one slow server in a hundred into most users waiting, and how hedged requests cut the tail for about 5% extra load."
-date: 2026-10-21
+date: 2026-10-22
 category: tech
 tags: ["backend-concepts", "distributed-systems", "latency", "performance"]
-draft: true
+draft: false
 ---
 
 The [last Backend Concepts post](/blog/posts/bulkhead-pattern-explained/) was about stopping one slow dependency from taking everything down with it. This one is about the slowness itself: not the dependency that hangs for minutes, but the ordinary server that is fast almost every time and slow just once in a while. That "once in a while" has a name, tail latency, and at scale it turns out to matter more than the typical case. These are my notes on it.
@@ -87,7 +87,7 @@ Same server, same freeze. Measured the usual way, the p99 is 1 ms and only one r
 
 Most of the paper is about techniques that accept that some servers will be slow and work around them.
 
-**Hedged requests.** Send the request to one replica. If it hasn't answered after a short delay, send the same request to a second replica, use whichever answer comes first, and cancel the other. The trick is choosing the delay. The paper suggests waiting until the request has been outstanding longer than the 95th-percentile time, which "limits the additional load to approximately 5% while substantially shortening the latency tail."
+**Hedged requests.** Send the request to one replica. If it hasn't answered after a short delay, send the same request to a second replica, use whichever answer comes first, and cancel the other. The trick is choosing the delay. The paper suggests waiting until the request has been outstanding longer than the 95th-percentile time, which "limits the additional load to approximately 5% while substantially shortening the latency tail." I go deeper on this, including where the code lives and why you must never hedge a plain write, in [hedged requests explained](/blog/posts/hedged-requests-explained/).
 
 I added that to my simulation: if a call hasn't answered by the p95 (14.6 ms in my numbers), send a second one.
 
@@ -110,7 +110,7 @@ About 5% more requests, and the share of slow requests fell from 63% to under 1%
 
 ## Where you'll see it
 
-Hedging is built into gRPC. Its retry design (gRFC A6) has a `hedgingPolicy` with a maximum number of attempts and a `hedgingDelay` between them. One detail surprised me: the document's header lists it as implemented in Java, .NET and Node, but "Go except hedging, and C-Core except hedging". So whether you can switch it on depends on which language your client is written in.
+Hedging is built into gRPC. Its retry design (gRFC A6) has a `hedgingPolicy` with a maximum number of attempts and a `hedgingDelay` between them. One detail surprised me: the document's header lists it as implemented in Java, .NET and Node, but "Go except hedging, and C-Core except hedging". So whether you can switch it on depends on which language your client is written in. If gRPC itself is new to you, I wrote a [separate post on what gRPC is](/blog/posts/grpc-explained/).
 
 ## The catches
 
