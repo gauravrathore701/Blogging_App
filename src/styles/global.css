@@ -19,6 +19,10 @@ html {
   background-color: var(--color-bg);
   color: var(--color-ink);
   scroll-behavior: smooth;
+  /* Sepia thumb on a paper track instead of the grey OS scrollbar.
+     Chrome 121+, Edge and Firefox; Safari keeps its own overlay bar. */
+  scrollbar-color: var(--color-accent-dim) var(--color-bg-sec);
+  scrollbar-width: thin;
 }
 
 /* Paper texture. Four layers, all pure CSS so nothing extra is fetched:
